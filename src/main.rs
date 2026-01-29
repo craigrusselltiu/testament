@@ -2,6 +2,7 @@ mod app;
 mod cli;
 mod error;
 mod model;
+mod parser;
 mod runner;
 mod ui;
 
