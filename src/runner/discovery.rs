@@ -196,3 +196,384 @@ fn group_tests_by_class(test_names: Vec<String>) -> Vec<TestClass> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // is_test_project_name tests
+    #[test]
+    fn test_is_test_project_name_with_tests_suffix() {
+        assert!(is_test_project_name("MyProjectTests"));
+        assert!(is_test_project_name("UnitTests"));
+        assert!(is_test_project_name("IntegrationTests"));
+    }
+
+    #[test]
+    fn test_is_test_project_name_with_test_suffix() {
+        assert!(is_test_project_name("MyProjectTest"));
+        assert!(is_test_project_name("UnitTest"));
+        assert!(is_test_project_name("IntegrationTest"));
+    }
+
+    #[test]
+    fn test_is_test_project_name_with_dot_tests_suffix() {
+        assert!(is_test_project_name("MyProject.Tests"));
+        assert!(is_test_project_name("Company.Product.Tests"));
+    }
+
+    #[test]
+    fn test_is_test_project_name_with_dot_test_suffix() {
+        assert!(is_test_project_name("MyProject.Test"));
+        assert!(is_test_project_name("Company.Product.Test"));
+    }
+
+    #[test]
+    fn test_is_test_project_name_non_test_projects() {
+        assert!(!is_test_project_name("MyProject"));
+        assert!(!is_test_project_name("TestUtilities"));
+        assert!(!is_test_project_name("Testing"));
+        assert!(!is_test_project_name("TestsData"));
+        assert!(!is_test_project_name("TestHelper"));
+    }
+
+    #[test]
+    fn test_is_test_project_name_empty() {
+        assert!(!is_test_project_name(""));
+    }
+
+    #[test]
+    fn test_is_test_project_name_case_sensitive() {
+        assert!(!is_test_project_name("MyProjecttests"));
+        assert!(!is_test_project_name("MyProjectTESTS"));
+        assert!(!is_test_project_name("MyProjecttest"));
+    }
+
+    // group_tests_by_class tests
+    #[test]
+    fn test_group_tests_empty_list() {
+        let result = group_tests_by_class(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_group_tests_single_test() {
+        let tests = vec!["MyNamespace.MyClass.TestMethod".to_string()];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "MyNamespace");
+        assert_eq!(class.tests.len(), 1);
+        assert_eq!(class.tests[0].name, "TestMethod");
+        assert_eq!(class.tests[0].full_name, "MyNamespace.MyClass.TestMethod");
+    }
+
+    #[test]
+    fn test_group_tests_multiple_tests_same_class() {
+        let tests = vec![
+            "NS.Class.Test1".to_string(),
+            "NS.Class.Test2".to_string(),
+            "NS.Class.Test3".to_string(),
+        ];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "Class");
+        assert_eq!(class.namespace, "NS");
+        assert_eq!(class.tests.len(), 3);
+    }
+
+    #[test]
+    fn test_group_tests_multiple_classes() {
+        let tests = vec![
+            "NS.ClassA.Test1".to_string(),
+            "NS.ClassB.Test1".to_string(),
+            "NS.ClassA.Test2".to_string(),
+        ];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 2);
+
+        let class_a = result.iter().find(|c| c.name == "ClassA").unwrap();
+        assert_eq!(class_a.tests.len(), 2);
+
+        let class_b = result.iter().find(|c| c.name == "ClassB").unwrap();
+        assert_eq!(class_b.tests.len(), 1);
+    }
+
+    #[test]
+    fn test_group_tests_nested_namespace() {
+        let tests = vec!["Company.Product.Feature.Tests.MyClass.TestMethod".to_string()];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "Company.Product.Feature.Tests");
+    }
+
+    #[test]
+    fn test_group_tests_no_namespace() {
+        let tests = vec!["MyClass.TestMethod".to_string()];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "");
+    }
+
+    #[test]
+    fn test_group_tests_only_method_name() {
+        let tests = vec!["TestMethod".to_string()];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "");
+        assert_eq!(class.namespace, "");
+        assert_eq!(class.tests.len(), 1);
+        assert_eq!(class.tests[0].name, "TestMethod");
+    }
+
+    #[test]
+    fn test_group_tests_preserves_full_name() {
+        let full_name = "Very.Long.Namespace.Path.ClassName.MethodName".to_string();
+        let tests = vec![full_name.clone()];
+        let result = group_tests_by_class(tests);
+
+        assert_eq!(result[0].tests[0].full_name, full_name);
+    }
+
+    // find_solution tests
+    #[test]
+    fn test_find_solution_in_current_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, "").unwrap();
+
+        let result = find_solution(temp_dir.path()).unwrap();
+        assert_eq!(result, sln_path);
+    }
+
+    #[test]
+    fn test_find_solution_in_parent_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, "").unwrap();
+
+        let sub_dir = temp_dir.path().join("src").join("project");
+        fs::create_dir_all(&sub_dir).unwrap();
+
+        let result = find_solution(&sub_dir).unwrap();
+        assert_eq!(result, sln_path);
+    }
+
+    #[test]
+    fn test_find_solution_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = find_solution(temp_dir.path());
+
+        assert!(result.is_err());
+        match result {
+            Err(TestamentError::NoSolutionFound) => (),
+            _ => panic!("Expected NoSolutionFound error"),
+        }
+    }
+
+    #[test]
+    fn test_find_solution_multiple_sln_files() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("First.sln"), "").unwrap();
+        fs::write(temp_dir.path().join("Second.sln"), "").unwrap();
+
+        let result = find_solution(temp_dir.path()).unwrap();
+        assert!(result.extension().map_or(false, |ext| ext == "sln"));
+    }
+
+    // parse_solution tests
+    #[test]
+    fn test_parse_solution_empty_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, "").unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_solution_no_test_projects() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProject", "MyProject\MyProject.csproj", "{12345678-1234-1234-1234-123456789012}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_solution_with_test_project() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create test project file
+        let project_dir = temp_dir.path().join("MyProjectTests");
+        fs::create_dir_all(&project_dir).unwrap();
+        let csproj_path = project_dir.join("MyProjectTests.csproj");
+        fs::write(&csproj_path, "<Project></Project>").unwrap();
+
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProjectTests", "MyProjectTests\MyProjectTests.csproj", "{12345678-1234-1234-1234-123456789012}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].ends_with("MyProjectTests.csproj"));
+    }
+
+    #[test]
+    fn test_parse_solution_with_multiple_test_projects() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create test project files
+        for name in &["UnitTests", "IntegrationTests"] {
+            let project_dir = temp_dir.path().join(name);
+            fs::create_dir_all(&project_dir).unwrap();
+            let csproj_path = project_dir.join(format!("{}.csproj", name));
+            fs::write(&csproj_path, "<Project></Project>").unwrap();
+        }
+
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UnitTests", "UnitTests\UnitTests.csproj", "{11111111-1111-1111-1111-111111111111}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IntegrationTests", "IntegrationTests\IntegrationTests.csproj", "{22222222-2222-2222-2222-222222222222}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_solution_mixed_projects() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create both regular and test project files
+        for name in &["MyProject", "MyProjectTests"] {
+            let project_dir = temp_dir.path().join(name);
+            fs::create_dir_all(&project_dir).unwrap();
+            let csproj_path = project_dir.join(format!("{}.csproj", name));
+            fs::write(&csproj_path, "<Project></Project>").unwrap();
+        }
+
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProject", "MyProject\MyProject.csproj", "{11111111-1111-1111-1111-111111111111}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProjectTests", "MyProjectTests\MyProjectTests.csproj", "{22222222-2222-2222-2222-222222222222}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].to_string_lossy().contains("MyProjectTests"));
+    }
+
+    #[test]
+    fn test_parse_solution_with_backslash_paths() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let project_dir = temp_dir.path().join("src").join("MyProjectTests");
+        fs::create_dir_all(&project_dir).unwrap();
+        let csproj_path = project_dir.join("MyProjectTests.csproj");
+        fs::write(&csproj_path, "<Project></Project>").unwrap();
+
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProjectTests", "src\MyProjectTests\MyProjectTests.csproj", "{12345678-1234-1234-1234-123456789012}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_solution_missing_csproj_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Don't create the actual .csproj file
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProjectTests", "MyProjectTests\MyProjectTests.csproj", "{12345678-1234-1234-1234-123456789012}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_solution_non_csproj_extension() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let project_dir = temp_dir.path().join("MyProjectTests");
+        fs::create_dir_all(&project_dir).unwrap();
+        let fsproj_path = project_dir.join("MyProjectTests.fsproj");
+        fs::write(&fsproj_path, "<Project></Project>").unwrap();
+
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MyProjectTests", "MyProjectTests\MyProjectTests.fsproj", "{12345678-1234-1234-1234-123456789012}"
+EndProject
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_parse_solution_file_not_found() {
+        let result = parse_solution(Path::new("/nonexistent/path/Test.sln"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_solution_malformed_project_line() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_content = r#"
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Incomplete
+"#;
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, sln_content).unwrap();
+
+        let result = parse_solution(&sln_path).unwrap();
+        assert!(result.is_empty());
+    }
+}

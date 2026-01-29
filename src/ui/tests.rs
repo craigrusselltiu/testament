@@ -189,3 +189,290 @@ pub fn build_test_items(
 
     items
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Test;
+
+    fn create_test_class(name: &str, namespace: &str, test_names: &[&str]) -> TestClass {
+        let mut class = TestClass::new(name.to_string(), namespace.to_string());
+        for test_name in test_names {
+            class.tests.push(Test::new(
+                test_name.to_string(),
+                format!("{}.{}.{}", namespace, name, test_name),
+            ));
+        }
+        class
+    }
+
+    // TestListItem tests
+    #[test]
+    fn test_list_item_class_variant() {
+        let item = TestListItem::Class("NS.MyClass".to_string());
+        match item {
+            TestListItem::Class(name) => assert_eq!(name, "NS.MyClass"),
+            _ => panic!("Expected Class variant"),
+        }
+    }
+
+    #[test]
+    fn test_list_item_test_variant() {
+        let item = TestListItem::Test("NS.MyClass.TestMethod".to_string());
+        match item {
+            TestListItem::Test(name) => assert_eq!(name, "NS.MyClass.TestMethod"),
+            _ => panic!("Expected Test variant"),
+        }
+    }
+
+    #[test]
+    fn test_list_item_clone() {
+        let item = TestListItem::Class("MyClass".to_string());
+        let cloned = item.clone();
+        match cloned {
+            TestListItem::Class(name) => assert_eq!(name, "MyClass"),
+            _ => panic!("Expected Class variant"),
+        }
+    }
+
+    // build_test_items tests - empty inputs
+    #[test]
+    fn test_build_test_items_empty_classes() {
+        let collapsed = HashSet::new();
+        let items = build_test_items(&[], &collapsed, "");
+        assert!(items.is_empty());
+    }
+
+    // build_test_items tests - basic functionality
+    #[test]
+    fn test_build_test_items_single_class_single_test() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        assert_eq!(items.len(), 2);
+        match &items[0] {
+            TestListItem::Class(name) => assert_eq!(name, "NS.MyClass"),
+            _ => panic!("Expected Class"),
+        }
+        match &items[1] {
+            TestListItem::Test(name) => assert_eq!(name, "NS.MyClass.Test1"),
+            _ => panic!("Expected Test"),
+        }
+    }
+
+    #[test]
+    fn test_build_test_items_single_class_multiple_tests() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2", "Test3"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        assert_eq!(items.len(), 4); // 1 class + 3 tests
+        match &items[0] {
+            TestListItem::Class(_) => (),
+            _ => panic!("Expected Class"),
+        }
+        for i in 1..4 {
+            match &items[i] {
+                TestListItem::Test(_) => (),
+                _ => panic!("Expected Test at index {}", i),
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_test_items_multiple_classes() {
+        let classes = vec![
+            create_test_class("ClassA", "NS", &["Test1"]),
+            create_test_class("ClassB", "NS", &["Test1", "Test2"]),
+        ];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        assert_eq!(items.len(), 5); // 2 classes + 3 tests total
+    }
+
+    // build_test_items tests - collapsed state
+    #[test]
+    fn test_build_test_items_collapsed_class() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
+        let mut collapsed = HashSet::new();
+        collapsed.insert("NS.MyClass".to_string());
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        assert_eq!(items.len(), 1); // Only the class header, no tests
+        match &items[0] {
+            TestListItem::Class(name) => assert_eq!(name, "NS.MyClass"),
+            _ => panic!("Expected Class"),
+        }
+    }
+
+    #[test]
+    fn test_build_test_items_mixed_collapsed() {
+        let classes = vec![
+            create_test_class("ClassA", "NS", &["Test1"]),
+            create_test_class("ClassB", "NS", &["Test1", "Test2"]),
+        ];
+        let mut collapsed = HashSet::new();
+        collapsed.insert("NS.ClassA".to_string()); // Only ClassA is collapsed
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        // ClassA (collapsed): 1 item
+        // ClassB (expanded): 1 class + 2 tests = 3 items
+        assert_eq!(items.len(), 4);
+    }
+
+    // build_test_items tests - filtering
+    #[test]
+    fn test_build_test_items_filter_matches_all() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "Test");
+
+        assert_eq!(items.len(), 3); // 1 class + 2 tests
+    }
+
+    #[test]
+    fn test_build_test_items_filter_matches_some() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Other2"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "Test");
+
+        assert_eq!(items.len(), 2); // 1 class + 1 matching test
+    }
+
+    #[test]
+    fn test_build_test_items_filter_matches_none() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "NonExistent");
+
+        assert!(items.is_empty()); // Class is excluded because no tests match
+    }
+
+    #[test]
+    fn test_build_test_items_filter_case_insensitive() {
+        let classes = vec![create_test_class("MyClass", "NS", &["TestMethod"])];
+        let collapsed = HashSet::new();
+
+        // Filter with different case
+        let items = build_test_items(&classes, &collapsed, "testmethod");
+        assert_eq!(items.len(), 2);
+
+        let items = build_test_items(&classes, &collapsed, "TESTMETHOD");
+        assert_eq!(items.len(), 2);
+
+        let items = build_test_items(&classes, &collapsed, "TeSt");
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_build_test_items_filter_partial_match() {
+        let classes = vec![create_test_class("MyClass", "NS", &["TestCalculation", "TestValidation"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "Calc");
+        assert_eq!(items.len(), 2); // 1 class + 1 test (only TestCalculation matches)
+
+        let items = build_test_items(&classes, &collapsed, "Test");
+        assert_eq!(items.len(), 3); // 1 class + 2 tests (both match)
+    }
+
+    #[test]
+    fn test_build_test_items_filter_with_collapsed_class() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
+        let mut collapsed = HashSet::new();
+        collapsed.insert("NS.MyClass".to_string());
+
+        // Even with filter, collapsed class shows only header
+        let items = build_test_items(&classes, &collapsed, "Test");
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_build_test_items_filter_excludes_class_with_no_matches() {
+        let classes = vec![
+            create_test_class("ClassA", "NS", &["Foo1"]),
+            create_test_class("ClassB", "NS", &["Test1"]),
+        ];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "Test");
+
+        // ClassA has no matching tests, so it should be excluded
+        assert_eq!(items.len(), 2); // Only ClassB and its test
+        match &items[0] {
+            TestListItem::Class(name) => assert_eq!(name, "NS.ClassB"),
+            _ => panic!("Expected ClassB"),
+        }
+    }
+
+    // build_test_items tests - edge cases
+    #[test]
+    fn test_build_test_items_empty_filter() {
+        let classes = vec![create_test_class("MyClass", "NS", &["Test1"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn test_build_test_items_class_with_no_tests() {
+        let classes = vec![TestClass::new("EmptyClass".to_string(), "NS".to_string())];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        // Class with no tests should still show up when no filter
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn test_build_test_items_class_with_no_tests_and_filter() {
+        let classes = vec![TestClass::new("EmptyClass".to_string(), "NS".to_string())];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "Test");
+
+        // Class with no tests should be excluded when filter is active
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_build_test_items_preserves_test_full_name() {
+        let classes = vec![create_test_class("MyClass", "Deep.Nested.NS", &["TestMethod"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        match &items[1] {
+            TestListItem::Test(name) => {
+                assert_eq!(name, "Deep.Nested.NS.MyClass.TestMethod");
+            }
+            _ => panic!("Expected Test"),
+        }
+    }
+
+    #[test]
+    fn test_build_test_items_class_without_namespace() {
+        let classes = vec![create_test_class("MyClass", "", &["Test1"])];
+        let collapsed = HashSet::new();
+
+        let items = build_test_items(&classes, &collapsed, "");
+
+        match &items[0] {
+            TestListItem::Class(name) => assert_eq!(name, "MyClass"),
+            _ => panic!("Expected Class"),
+        }
+    }
+}
