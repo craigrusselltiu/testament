@@ -3,7 +3,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TestamentError {
-    #[error("No solution file found")]
+    #[error("No .sln or .csproj file found in the specified directory. Run 'testament <path>' with a path to a solution file, project file, or a directory containing one.")]
     NoSolutionFound,
 
     #[error("Failed to read file: {path}")]

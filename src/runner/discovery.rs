@@ -4,24 +4,50 @@ use std::process::Command;
 use crate::error::{Result, TestamentError};
 use crate::model::{Test, TestClass, TestProject};
 
-/// Find a .sln file by searching upward from the given directory.
+/// Find a .sln or .csproj file in the given path.
+///
+/// If `start` is a file with .sln or .csproj extension, returns it directly.
+/// If `start` is a directory, searches only that directory (non-recursively) for .sln files first,
+/// then .csproj files.
 pub fn find_solution(start: &Path) -> Result<PathBuf> {
-    let mut current = start.to_path_buf();
-    loop {
-        for entry in std::fs::read_dir(&current).map_err(|e| TestamentError::FileRead {
-            path: current.clone(),
-            source: e,
-        })? {
-            let entry = entry?;
+    // If start is a file, check if it's a valid solution/project file
+    if start.is_file() {
+        if let Some(ext) = start.extension() {
+            if ext == "sln" || ext == "csproj" {
+                return Ok(start.to_path_buf());
+            }
+        }
+        return Err(TestamentError::NoSolutionFound);
+    }
+
+    // If start is a directory, search only in that directory (non-recursively)
+    if start.is_dir() {
+        let entries: Vec<_> = std::fs::read_dir(start)
+            .map_err(|e| TestamentError::FileRead {
+                path: start.to_path_buf(),
+                source: e,
+            })?
+            .filter_map(|e| e.ok())
+            .collect();
+
+        // First, look for .sln files
+        for entry in &entries {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "sln") {
                 return Ok(path);
             }
         }
-        if !current.pop() {
-            return Err(TestamentError::NoSolutionFound);
+
+        // If no .sln found, look for .csproj files
+        for entry in &entries {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "csproj") {
+                return Ok(path);
+            }
         }
     }
+
+    Err(TestamentError::NoSolutionFound)
 }
 
 /// Parse a .sln file to extract test project paths.
@@ -65,8 +91,18 @@ fn is_test_project_name(name: &str) -> bool {
 }
 
 /// Discover test projects and their tests.
-pub fn discover_projects(sln_path: &Path) -> Result<Vec<TestProject>> {
-    let project_paths = parse_solution(sln_path)?;
+///
+/// If `path` is a .csproj file, treats it as the single project.
+/// If `path` is a .sln file, parses it to find test projects.
+pub fn discover_projects(path: &Path) -> Result<Vec<TestProject>> {
+    let project_paths = if path.extension().map_or(false, |ext| ext == "csproj") {
+        // Directly use the .csproj file
+        vec![path.to_path_buf()]
+    } else {
+        // Parse the .sln file
+        parse_solution(path)?
+    };
+
     let mut projects = Vec::new();
 
     for path in project_paths {
