@@ -15,3 +15,6 @@ toml = "0.8"
 quick-xml = "0.37"
 thiserror = "2"
 notify = "7"
+
+[dev-dependencies]
+tempfile = "3"
