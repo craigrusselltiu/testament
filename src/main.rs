@@ -1,7 +1,9 @@
+mod app;
 mod cli;
 mod error;
 mod model;
 mod runner;
+mod ui;
 
 use std::env;
 
@@ -13,36 +15,24 @@ fn main() {
 
     let start_dir = cli.path.unwrap_or_else(|| env::current_dir().unwrap());
 
-    match find_solution(&start_dir) {
-        Ok(sln_path) => {
-            println!("Found solution: {}", sln_path.display());
-
-            match discover_projects(&sln_path) {
-                Ok(projects) => {
-                    if projects.is_empty() {
-                        println!("No test projects found.");
-                    } else {
-                        for project in &projects {
-                            println!("\n{} ({} tests)", project.name, project.test_count());
-                            for class in &project.classes {
-                                println!("  {}", class.full_name());
-                                for test in &class.tests {
-                                    println!("    - {}", test.name);
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => eprintln!("Failed to discover tests: {}", e),
-            }
+    let sln_path = match find_solution(&start_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    };
 
-    if let Some(cli::Command::Run { filter }) = &cli.command {
-        println!("\nRunning tests...");
-        if let Some(f) = filter {
-            println!("Filter: {}", f);
+    let projects = match discover_projects(&sln_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to discover tests: {}", e);
+            std::process::exit(1);
         }
+    };
+
+    if let Err(e) = app::run(projects) {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
     }
 }
