@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod config;
 mod error;
 mod model;
 mod parser;
@@ -32,7 +33,9 @@ fn main() {
         }
     };
 
-    if let Err(e) = app::run(projects) {
+    let solution_dir = sln_path.parent().unwrap_or(&start_dir).to_path_buf();
+
+    if let Err(e) = app::run(projects, solution_dir) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }

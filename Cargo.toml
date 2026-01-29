@@ -14,3 +14,4 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 quick-xml = "0.37"
 thiserror = "2"
+notify = "7"
