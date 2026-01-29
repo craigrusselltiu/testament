@@ -6,8 +6,8 @@ use std::path::PathBuf;
 #[command(about = "A TUI for discovering, running, and monitoring .NET tests")]
 #[command(version)]
 pub struct Cli {
-    /// Path to solution or project file
-    #[arg(short, long)]
+    /// Path to solution file, project file, or directory containing one
+    #[arg(value_name = "PATH")]
     pub path: Option<PathBuf>,
 
     #[command(subcommand)]
