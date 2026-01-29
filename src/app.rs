@@ -1,4 +1,5 @@
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::{
@@ -10,10 +11,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
-use crate::runner::{ExecutorEvent, TestExecutor};
-use crate::ui::{self, layout::AppState};
+use crate::runner::{ExecutorEvent, FileWatcher, TestExecutor};
+use crate::ui::{self, build_test_items, layout::AppState, Pane, TestListItem};
 
-pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
+pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -22,13 +23,23 @@ pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AppState::new(projects);
-    state.output = "Press 'r' to run tests, 'q' to quit, j/k to navigate".to_string();
 
     let mut executor_rx: Option<std::sync::mpsc::Receiver<ExecutorEvent>> = None;
+    let mut file_watcher: Option<FileWatcher> = None;
 
     // Main loop
     loop {
         terminal.draw(|f| ui::draw(f, &mut state))?;
+
+        // Check for file changes in watch mode
+        if state.watch_mode {
+            if let Some(ref watcher) = file_watcher {
+                if watcher.try_recv() && executor_rx.is_none() {
+                    state.output.push_str("\n[Watch] File change detected, running tests...\n");
+                    run_tests(&mut state, &mut executor_rx);
+                }
+            }
+        }
 
         // Check for executor events
         if let Some(ref rx) = executor_rx {
@@ -39,9 +50,23 @@ pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
                         state.output.push_str(&line);
                     }
                     ExecutorEvent::Completed(results) => {
+                        // Track failed tests
+                        state.last_failed.clear();
+                        for result in &results {
+                            if result.outcome == TestOutcome::Failed {
+                                state.last_failed.insert(result.test_name.clone());
+                            }
+                        }
+
                         apply_results(&mut state, &results);
-                        let passed = results.iter().filter(|r| r.outcome == TestOutcome::Passed).count();
-                        let failed = results.iter().filter(|r| r.outcome == TestOutcome::Failed).count();
+                        let passed = results
+                            .iter()
+                            .filter(|r| r.outcome == TestOutcome::Passed)
+                            .count();
+                        let failed = results
+                            .iter()
+                            .filter(|r| r.outcome == TestOutcome::Failed)
+                            .count();
                         state.output.push_str(&format!(
                             "\n\n--- Results: {} passed, {} failed ---",
                             passed, failed
@@ -64,6 +89,27 @@ pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
+
+                // Handle filter mode input
+                if state.filter_active {
+                    match key.code {
+                        KeyCode::Esc => {
+                            state.filter_active = false;
+                        }
+                        KeyCode::Enter => {
+                            state.filter_active = false;
+                        }
+                        KeyCode::Backspace => {
+                            state.filter.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            state.filter.push(c);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') => break,
                     KeyCode::Char('j') | KeyCode::Down => {
@@ -73,20 +119,75 @@ pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
                         move_selection(&mut state, -1);
                     }
                     KeyCode::Tab => {
-                        // TODO: Switch focus between panes
+                        state.active_pane = match state.active_pane {
+                            Pane::Projects => Pane::Tests,
+                            Pane::Tests => Pane::Output,
+                            Pane::Output => Pane::Projects,
+                        };
+                    }
+                    KeyCode::BackTab => {
+                        state.active_pane = match state.active_pane {
+                            Pane::Projects => Pane::Output,
+                            Pane::Tests => Pane::Projects,
+                            Pane::Output => Pane::Tests,
+                        };
+                    }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        if state.active_pane == Pane::Tests {
+                            toggle_collapse(&mut state);
+                        }
+                    }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        if state.active_pane == Pane::Tests {
+                            toggle_collapse(&mut state);
+                        }
+                    }
+                    KeyCode::Char(' ') => {
+                        if state.active_pane == Pane::Tests {
+                            toggle_test_selection(&mut state);
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        state.clear_selection();
+                    }
+                    KeyCode::Char('/') => {
+                        state.filter_active = true;
+                        state.filter.clear();
+                    }
+                    KeyCode::Esc => {
+                        if !state.filter.is_empty() {
+                            state.filter.clear();
+                        }
+                    }
+                    KeyCode::Char('w') => {
+                        state.watch_mode = !state.watch_mode;
+                        if state.watch_mode {
+                            match FileWatcher::new(&solution_dir) {
+                                Ok(watcher) => {
+                                    file_watcher = Some(watcher);
+                                    state.output.push_str("\n[Watch] Watch mode enabled\n");
+                                }
+                                Err(e) => {
+                                    state.watch_mode = false;
+                                    state.output.push_str(&format!(
+                                        "\n[Watch] Failed to enable watch mode: {}\n",
+                                        e
+                                    ));
+                                }
+                            }
+                        } else {
+                            file_watcher = None;
+                            state.output.push_str("\n[Watch] Watch mode disabled\n");
+                        }
                     }
                     KeyCode::Char('r') => {
                         if executor_rx.is_none() {
-                            if let Some(idx) = state.project_state.selected() {
-                                if let Some(project) = state.projects.get(idx) {
-                                    let name = project.name.clone();
-                                    let path = project.path.clone();
-                                    mark_tests_running(&mut state);
-                                    state.output = format!("Running tests for {}...\n", name);
-                                    let executor = TestExecutor::new(&path);
-                                    executor_rx = Some(executor.run());
-                                }
-                            }
+                            run_tests(&mut state, &mut executor_rx);
+                        }
+                    }
+                    KeyCode::Char('a') => {
+                        if executor_rx.is_none() && !state.last_failed.is_empty() {
+                            run_failed_tests(&mut state, &mut executor_rx);
                         }
                     }
                     _ => {}
@@ -102,21 +203,153 @@ pub fn run(projects: Vec<TestProject>) -> io::Result<()> {
 }
 
 fn move_selection(state: &mut AppState, delta: i32) {
-    let len = state.projects.len();
-    if len == 0 {
-        return;
+    match state.active_pane {
+        Pane::Projects => {
+            let len = state.projects.len();
+            if len == 0 {
+                return;
+            }
+            let current = state.project_state.selected().unwrap_or(0) as i32;
+            let new = (current + delta).rem_euclid(len as i32) as usize;
+            state.project_state.select(Some(new));
+        }
+        Pane::Tests => {
+            if let Some(idx) = state.project_state.selected() {
+                if let Some(project) = state.projects.get(idx) {
+                    let items = build_test_items(
+                        &project.classes,
+                        &state.collapsed_classes,
+                        &state.filter,
+                    );
+                    let len = items.len();
+                    if len == 0 {
+                        return;
+                    }
+                    let current = state.test_state.selected().unwrap_or(0) as i32;
+                    let new = (current + delta).rem_euclid(len as i32) as usize;
+                    state.test_state.select(Some(new));
+                }
+            }
+        }
+        Pane::Output => {
+            // Could implement scrolling here in the future
+        }
     }
-    let current = state.project_state.selected().unwrap_or(0) as i32;
-    let new = (current + delta).rem_euclid(len as i32) as usize;
-    state.project_state.select(Some(new));
 }
 
-fn mark_tests_running(state: &mut AppState) {
+fn toggle_collapse(state: &mut AppState) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get(idx) {
+            let items =
+                build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+            if let Some(selected) = state.test_state.selected() {
+                if let Some(item) = items.get(selected) {
+                    if let TestListItem::Class(class_name) = item {
+                        state.toggle_class_collapsed(class_name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn toggle_test_selection(state: &mut AppState) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get(idx) {
+            let items =
+                build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+            if let Some(selected) = state.test_state.selected() {
+                if let Some(item) = items.get(selected) {
+                    if let TestListItem::Test(test_name) = item {
+                        state.toggle_test_selected(test_name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn run_tests(
+    state: &mut AppState,
+    executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
+) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get(idx) {
+            let name = project.name.clone();
+            let path = project.path.clone();
+
+            // Mark tests as running
+            if state.selected_tests.is_empty() {
+                // Run all tests
+                mark_all_tests_running(state);
+                state.output = format!("Running all tests for {}...\n", name);
+            } else {
+                // Run only selected tests
+                mark_selected_tests_running(state);
+                state.output = format!(
+                    "Running {} selected tests for {}...\n",
+                    state.selected_tests.len(),
+                    name
+                );
+            }
+
+            let executor = TestExecutor::new(&path);
+            *executor_rx = Some(executor.run());
+        }
+    }
+}
+
+fn run_failed_tests(
+    state: &mut AppState,
+    executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
+) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get(idx) {
+            let name = project.name.clone();
+            let path = project.path.clone();
+
+            // Mark failed tests as running
+            let failed_count = state.last_failed.len();
+            if let Some(project) = state.projects.get_mut(idx) {
+                for class in &mut project.classes {
+                    for test in &mut class.tests {
+                        if state.last_failed.contains(&test.full_name)
+                            || state.last_failed.iter().any(|f| f.ends_with(&test.name))
+                        {
+                            test.status = TestStatus::Running;
+                        }
+                    }
+                }
+            }
+
+            state.output = format!("Re-running {} failed tests for {}...\n", failed_count, name);
+
+            let executor = TestExecutor::new(&path);
+            *executor_rx = Some(executor.run());
+        }
+    }
+}
+
+fn mark_all_tests_running(state: &mut AppState) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get_mut(idx) {
             for class in &mut project.classes {
                 for test in &mut class.tests {
                     test.status = TestStatus::Running;
+                }
+            }
+        }
+    }
+}
+
+fn mark_selected_tests_running(state: &mut AppState) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get_mut(idx) {
+            for class in &mut project.classes {
+                for test in &mut class.tests {
+                    if state.selected_tests.contains(&test.full_name) {
+                        test.status = TestStatus::Running;
+                    }
                 }
             }
         }

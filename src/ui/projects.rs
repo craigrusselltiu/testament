@@ -12,11 +12,12 @@ use crate::ui::theme::Theme;
 pub struct ProjectList<'a> {
     projects: &'a [TestProject],
     theme: &'a Theme,
+    focused: bool,
 }
 
 impl<'a> ProjectList<'a> {
-    pub fn new(projects: &'a [TestProject], theme: &'a Theme) -> Self {
-        Self { projects, theme }
+    pub fn new(projects: &'a [TestProject], theme: &'a Theme, focused: bool) -> Self {
+        Self { projects, theme, focused }
     }
 }
 
@@ -33,12 +34,18 @@ impl StatefulWidget for ProjectList<'_> {
             })
             .collect();
 
+        let border_style = if self.focused {
+            Style::default().fg(self.theme.highlight)
+        } else {
+            Style::default().fg(self.theme.border)
+        };
+
         let list = List::new(items)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("Projects")
-                    .border_style(Style::default().fg(self.theme.border)),
+                    .border_style(border_style),
             )
             .style(Style::default().fg(self.theme.fg))
             .highlight_style(
