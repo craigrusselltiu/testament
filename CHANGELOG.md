@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v0.3.0 - 2026-01-30
+
+### Added
+- Random startup phrase displayed in output pane on launch (thematic messages like "Gathering the witnesses...", "Let there be tests...")
+
 ## v0.2.1 - 2026-01-30
 
 ### Changed
