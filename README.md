@@ -160,7 +160,3 @@ cargo test           # Run tests
 cargo clippy         # Lint
 cargo fmt            # Format code
 ```
-
-## License
-
-MIT
