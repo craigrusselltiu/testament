@@ -22,21 +22,6 @@ Testament solves the problem of managing test execution in large .NET solutions 
 
 ## Architecture
 
-Testament uses a three-pane layout for efficient test management:
-
-```
-+------------------+----------------------+------------------------+
-|                  |                      |                        |
-|    Projects      |       Tests          |        Output          |
-|                  |                      |                        |
-|  - Project.Tests |  > TestClass         |  Test run output...    |
-|  - Other.Tests   |      TestMethod1     |  Passed: 10            |
-|                  |      TestMethod2     |  Failed: 1             |
-|                  |    > AnotherClass    |  Duration: 2.5s        |
-|                  |                      |                        |
-+------------------+----------------------+------------------------+
-```
-
 **Test Execution Flow:**
 
 ```mermaid
@@ -101,10 +86,11 @@ Testament will automatically:
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
+| `b` | Build project only |
 | `r` | Run tests (all or selected) |
 | `a` | Run failed tests from last run |
 | `w` | Toggle watch mode |
-| `j` / `k` | Move down / up |
+| `j` / `k` / `Arrow keys` | Move down / up |
 | `Tab` | Switch to next pane |
 | `Shift+Tab` | Switch to previous pane |
 | `h` / `l` | Collapse / expand test class |

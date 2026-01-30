@@ -779,6 +779,7 @@ pub struct CursorPosition {
 | `h` / `←`           | Collapse / parent          |
 | `l` / `→` / `Enter` | Expand / details           |
 | `Space`             | Toggle selection (add/remove from multi-select) |
+| `b`                 | Build project only         |
 | `r`                 | Run selected tests (or test at cursor if none selected) |
 | `R`                 | Run all tests              |
 | `a`                 | Run failed again           |

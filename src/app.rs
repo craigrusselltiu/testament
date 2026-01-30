@@ -49,6 +49,19 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                         state.output.push('\n');
                         state.output.push_str(&line);
                     }
+                    ExecutorEvent::Status(msg) => {
+                        state.output.push('\n');
+                        state.output.push_str(&msg);
+                    }
+                    ExecutorEvent::BuildCompleted(success) => {
+                        if success {
+                            state.output.push_str("\nBuild succeeded");
+                        } else {
+                            state.output.push_str("\nBuild FAILED");
+                        }
+                        executor_rx = None;
+                        break;
+                    }
                     ExecutorEvent::Completed(results) => {
                         // Track failed tests
                         state.last_failed.clear();
@@ -185,6 +198,11 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                             run_tests(&mut state, &mut executor_rx);
                         }
                     }
+                    KeyCode::Char('b') => {
+                        if executor_rx.is_none() {
+                            build_project(&mut state, &mut executor_rx);
+                        }
+                    }
                     KeyCode::Char('a') => {
                         if executor_rx.is_none() && !state.last_failed.is_empty() {
                             run_failed_tests(&mut state, &mut executor_rx);
@@ -232,7 +250,10 @@ fn move_selection(state: &mut AppState, delta: i32) {
             }
         }
         Pane::Output => {
-            // Could implement scrolling here in the future
+            let line_count = state.output.lines().count() as i32;
+            let current = state.output_scroll as i32;
+            let new = (current + delta).max(0).min(line_count.saturating_sub(1));
+            state.output_scroll = new as u16;
         }
     }
 }
@@ -295,6 +316,23 @@ fn run_tests(
 
             let executor = TestExecutor::new(&path);
             *executor_rx = Some(executor.run());
+        }
+    }
+}
+
+fn build_project(
+    state: &mut AppState,
+    executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
+) {
+    if let Some(idx) = state.project_state.selected() {
+        if let Some(project) = state.projects.get(idx) {
+            let name = project.name.clone();
+            let path = project.path.clone();
+
+            state.output = format!("Building {}...\n", name);
+
+            let executor = TestExecutor::new(&path);
+            *executor_rx = Some(executor.build());
         }
     }
 }
