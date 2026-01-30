@@ -12,7 +12,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
 use crate::runner::{ExecutorEvent, FileWatcher, TestExecutor};
-use crate::ui::{self, build_test_items, layout::AppState, Pane, TestListItem};
+use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_ready_phrase}, Pane, TestListItem};
 
 pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> {
     // Setup terminal
@@ -23,6 +23,7 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AppState::new(projects);
+    state.output = format!("{}\n{}", startup_art(), random_ready_phrase());
 
     let mut executor_rx: Option<std::sync::mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;

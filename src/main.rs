@@ -10,9 +10,13 @@ use std::env;
 
 use cli::Cli;
 use runner::{discover_projects, find_solution};
+use ui::layout::random_startup_phrase;
 
 fn main() {
     let cli = Cli::parse_args();
+
+    // Show loading phrase before discovering projects
+    println!("{}", random_startup_phrase());
 
     let start_dir = cli.path.unwrap_or_else(|| env::current_dir().unwrap());
 

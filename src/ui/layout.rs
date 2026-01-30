@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout},
@@ -12,6 +13,80 @@ use crate::ui::output::OutputPane;
 use crate::ui::projects::ProjectList;
 use crate::ui::tests::TestList;
 use crate::ui::theme::Theme;
+
+const STARTUP_ART: &str = r#"
+                         ▒▒▒▒▒
+                         ▒▒░▒▒
+                ░░    ▒▒░░░░░░░░▒░    ░░
+                 ░░   ░▒▒▒▒░▒▒▒▒▒    ░░
+           ░░     ░░     ▒▒░▒▒      ░░     ░░
+              ░░   ░░    ▒▒░▒▒    ░░    ░░
+                 ░░  ░░  ▒▒░▒▒   ░░  ░░
+         ░░░░░░░░  ░░    ▒▒░▒▒     ░░  ░░░░░░░░
+                         ░▒▒▒▒
+         ░░░░░░░░░░░░             ░░░░░░░░░░
+     ▒█░░░░░░▒▒▒▒▒▒░▒░░░░     ░░░░▒▒░░▒▒▒▒▒▒░░▒██▓
+     ▓▓░░░░░░▒▒▒▒▒░░▒▒▒▒░░░█▒░░▒▒▒▒▒░░▒▒▒▒▒▒░░░░█▓
+     █▓░░░░░▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒░░░░▓█▓
+     █░░░▒░░▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒░░░░█▓
+    ▓█░░░░░░▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒░░▒░▓█
+    █▓░░░░░░▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒░░░░▒█▒
+   ▓█▒░░░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒░░░░▓▓
+   ▓█░░░▒░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒░░▒░▒█▓
+   █▓░░░░░░▒▒▒▒░░░░░░░░░▒▒░░░▒▒░░░░░░░░░░░░▒▒▒░░▒░░▓▓
+  ▓█▒░░░░░░░░░░░▒▒▒▒▒▒▒░░░░░░░░▒▒▒▒▒▒▒▒▒▒░░░░░░░░░░▓█▓
+  ▓█░░░▒░░░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒░▒░░█▓
+  █▓░░░▒▒▒▒▒▒▒▓▓▓█████████████▓█████████████▓▓▒▒▒▒▒░▓█
+  ▓█▓▒▓▓▓███▓▓▓▓▓▓▓                   ▓▓▓▓▓▓▓▓▓█████▓█▓
+"#;
+
+const STARTUP_PHRASES: &[&str] = &[
+    "Gathering the witnesses...",
+    "Preparing the trial...",
+    "Assembling the evidence...",
+    "Let there be tests...",
+    "Seeking the truth...",
+    "The testimony awaits...",
+    "In the beginning was the code...",
+    "Try all things...",
+];
+
+const READY_PHRASES: &[&str] = &[
+    "Let the truth be known.",
+    "The truth shall set you free.",
+    "Seek and you shall find.",
+    "Ask, and it shall be given.",
+    "Test with conviction.",
+    "Prove all things.",
+    "Let your code be tested.",
+    "Bear witness.",
+    "Testament is ready.",
+    "Standing in testimony.",
+    "Prepared to testify.",
+];
+
+fn random_phrase(phrases: &[&'static str]) -> &'static str {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let nanos = duration.as_nanos();
+    // Mix different parts of the timestamp for better distribution
+    let seed = (nanos ^ (nanos >> 17) ^ (nanos >> 34)) as usize;
+    let index = seed % phrases.len();
+    phrases[index]
+}
+
+pub fn random_startup_phrase() -> &'static str {
+    random_phrase(STARTUP_PHRASES)
+}
+
+pub fn random_ready_phrase() -> &'static str {
+    random_phrase(READY_PHRASES)
+}
+
+pub fn startup_art() -> &'static str {
+    STARTUP_ART
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
