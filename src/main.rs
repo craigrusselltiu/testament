@@ -16,7 +16,7 @@ fn main() {
     let cli = Cli::parse_args();
 
     // Show loading phrase before discovering projects
-    println!("{}", random_startup_phrase());
+    println!("\u{2020} {}", random_startup_phrase());
 
     let start_dir = cli.path.unwrap_or_else(|| env::current_dir().unwrap());
 
