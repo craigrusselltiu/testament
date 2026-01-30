@@ -77,6 +77,31 @@ src/
 - When in doubt, write less code. A 50-line solution is better than a 200-line "robust" one.
 - Shell out to `dotnet` and `git` CLIs where practical rather than reimplementing their logic.
 
+## File Size Guidelines
+
+**General guidance: 200-500 lines per file.** This keeps files small enough to reason about while avoiding excessive fragmentation.
+
+| File Type | Sweet Spot | Upper Limit |
+|-----------|------------|-------------|
+| mod.rs | 50-150 | Re-exports and glue only |
+| Feature modules | 200-400 | 600 |
+| Data models | 100-300 | 400 |
+| UI components | 150-350 | 500 |
+| Tests | 200-500 | Can be longer, grouped by fixture |
+
+**When to split:**
+- Multiple distinct responsibilities in one file
+- You're scrolling a lot to find things
+- The file has natural seams (e.g., `executor.rs` could become `executor/run.rs`, `executor/parse.rs`)
+- More than 3-4 major structs/enums with their own impl blocks
+
+**When longer is fine:**
+- Single cohesive responsibility (e.g., a parser for one format)
+- Splitting would create artificial boundaries
+- Test files covering one module thoroughly
+
+For Testament specifically, most files should land in the 150-400 range, with `app.rs` (state machine) and `executor.rs` (dotnet integration) potentially pushing toward 500-600 if they stay unified.
+
 ## Development Workflow
 
 Work is done in feature branches and merged via PR to `main` at the end of each main phase.
