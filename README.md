@@ -10,6 +10,8 @@ Testament is a terminal UI application for discovering, running, and monitoring 
 
 Testament solves the problem of managing test execution in large .NET solutions by providing a focused, distraction-free interface that lets you quickly navigate between projects, select specific tests, and view results without leaving the terminal.
 
+<img width="2556" height="1385" alt="image" src="https://github.com/user-attachments/assets/9981bd16-dece-4537-8534-ae62c685009c" />
+
 ## Built With
 
 - [Rust](https://www.rust-lang.org/) - Systems programming language
