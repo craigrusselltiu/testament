@@ -12,11 +12,18 @@ pub struct OutputPane<'a> {
     theme: &'a Theme,
     focused: bool,
     scroll: u16,
+    progress: Option<(usize, usize)>,
 }
 
 impl<'a> OutputPane<'a> {
-    pub fn new(content: &'a str, theme: &'a Theme, focused: bool, scroll: u16) -> Self {
-        Self { content, theme, focused, scroll }
+    pub fn new(
+        content: &'a str,
+        theme: &'a Theme,
+        focused: bool,
+        scroll: u16,
+        progress: Option<(usize, usize)>,
+    ) -> Self {
+        Self { content, theme, focused, scroll, progress }
     }
 }
 
@@ -28,7 +35,22 @@ impl Widget for OutputPane<'_> {
             Style::default().fg(self.theme.border)
         };
 
-        let paragraph = Paragraph::new(self.content)
+        let display_content = if let Some((completed, total)) = self.progress {
+            let width = 20;
+            let filled = if total > 0 { (completed * width) / total } else { 0 };
+            let bar = format!(
+                "\n[{}{}] {}/{}",
+                "\u{2588}".repeat(filled),
+                "\u{2591}".repeat(width - filled),
+                completed,
+                total
+            );
+            format!("{}{}", self.content, bar)
+        } else {
+            self.content.to_string()
+        };
+
+        let paragraph = Paragraph::new(display_content)
             .block(
                 Block::default()
                     .borders(Borders::ALL)

@@ -109,6 +109,7 @@ pub struct AppState {
     pub filter_active: bool,
     pub watch_mode: bool,
     pub last_failed: HashSet<String>,
+    pub test_progress: Option<(usize, usize)>,
 }
 
 impl AppState {
@@ -131,6 +132,7 @@ impl AppState {
             filter_active: false,
             watch_mode: false,
             last_failed: HashSet::new(),
+            test_progress: None,
         }
     }
 
@@ -207,6 +209,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.theme,
         state.active_pane == Pane::Output,
         state.output_scroll,
+        state.test_progress,
     );
     frame.render_widget(output_pane, chunks[2]);
 
@@ -227,7 +230,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         if failed_count > 0 {
             parts.push("a:run-failed");
         }
-        parts.extend(["Space:select", "/:filter"]);
+        parts.extend(["Space:toggle", "x:clear", "/:filter"]);
 
         let suffix = if selected_count > 0 {
             format!(" | {} selected", selected_count)

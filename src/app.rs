@@ -47,8 +47,16 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
             while let Ok(event) = rx.try_recv() {
                 match event {
                     ExecutorEvent::OutputLine(line) => {
-                        state.output.push('\n');
-                        state.output.push_str(&line);
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("Passed") || trimmed.starts_with("Failed") {
+                            // Increment progress instead of appending
+                            if let Some((completed, _)) = &mut state.test_progress {
+                                *completed += 1;
+                            }
+                        } else {
+                            state.output.push('\n');
+                            state.output.push_str(&line);
+                        }
                     }
                     ExecutorEvent::Status(msg) => {
                         state.output.push('\n');
@@ -73,18 +81,7 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                         }
 
                         apply_results(&mut state, &results);
-                        let passed = results
-                            .iter()
-                            .filter(|r| r.outcome == TestOutcome::Passed)
-                            .count();
-                        let failed = results
-                            .iter()
-                            .filter(|r| r.outcome == TestOutcome::Failed)
-                            .count();
-                        state.output.push_str(&format!(
-                            "\n\n--- Results: {} passed, {} failed ---",
-                            passed, failed
-                        ));
+                        state.test_progress = None;
                         executor_rx = None;
                         break;
                     }
@@ -126,10 +123,10 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
 
                 match key.code {
                     KeyCode::Char('q') => break,
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Down => {
                         move_selection(&mut state, 1);
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Up => {
                         move_selection(&mut state, -1);
                     }
                     KeyCode::Tab => {
@@ -146,20 +143,15 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                             Pane::Output => Pane::Tests,
                         };
                     }
-                    KeyCode::Char('h') | KeyCode::Left => {
-                        if state.active_pane == Pane::Tests {
-                            toggle_collapse(&mut state);
-                        }
-                    }
-                    KeyCode::Char('l') | KeyCode::Right => {
-                        if state.active_pane == Pane::Tests {
-                            toggle_collapse(&mut state);
-                        }
-                    }
                     KeyCode::Char(' ') => {
                         if state.active_pane == Pane::Tests {
-                            toggle_test_selection(&mut state);
+                            toggle_space_action(&mut state);
                         }
+                    }
+                    KeyCode::Char('x') => {
+                        state.output.clear();
+                        state.output_scroll = 0;
+                        state.test_progress = None;
                     }
                     KeyCode::Char('c') => {
                         state.clear_selection();
@@ -265,25 +257,24 @@ fn toggle_collapse(state: &mut AppState) {
             let items =
                 build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
             if let Some(selected) = state.test_state.selected() {
-                if let Some(item) = items.get(selected) {
-                    if let TestListItem::Class(class_name) = item {
-                        state.toggle_class_collapsed(class_name);
-                    }
+                if let Some(TestListItem::Class(class_name)) = items.get(selected) {
+                    state.toggle_class_collapsed(class_name);
                 }
             }
         }
     }
 }
 
-fn toggle_test_selection(state: &mut AppState) {
+fn toggle_space_action(state: &mut AppState) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
             let items =
                 build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
             if let Some(selected) = state.test_state.selected() {
                 if let Some(item) = items.get(selected) {
-                    if let TestListItem::Test(test_name) = item {
-                        state.toggle_test_selected(test_name);
+                    match item {
+                        TestListItem::Class(_) => toggle_collapse(state),
+                        TestListItem::Test(test_name) => state.toggle_test_selected(test_name),
                     }
                 }
             }
@@ -296,28 +287,28 @@ fn run_tests(
     executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
 ) {
     if let Some(idx) = state.project_state.selected() {
-        if let Some(project) = state.projects.get(idx) {
-            let name = project.name.clone();
-            let path = project.path.clone();
+        // Get path and test count before mutating
+        let (path, project_test_count) = if let Some(project) = state.projects.get(idx) {
+            (project.path.clone(), project.test_count())
+        } else {
+            return;
+        };
 
-            // Mark tests as running
-            if state.selected_tests.is_empty() {
-                // Run all tests
-                mark_all_tests_running(state);
-                state.output = format!("Running all tests for {}...\n", name);
-            } else {
-                // Run only selected tests
-                mark_selected_tests_running(state);
-                state.output = format!(
-                    "Running {} selected tests for {}...\n",
-                    state.selected_tests.len(),
-                    name
-                );
-            }
+        // Count total tests for progress tracking
+        let total_tests = if state.selected_tests.is_empty() {
+            mark_all_tests_running(state);
+            project_test_count
+        } else {
+            mark_selected_tests_running(state);
+            state.selected_tests.len()
+        };
 
-            let executor = TestExecutor::new(&path);
-            *executor_rx = Some(executor.run());
-        }
+        state.output.push_str("\n────────────────────────────\n");
+        state.output.push_str("Running tests...\n");
+        state.test_progress = Some((0, total_tests));
+
+        let executor = TestExecutor::new(&path);
+        *executor_rx = Some(executor.run());
     }
 }
 
@@ -327,10 +318,10 @@ fn build_project(
 ) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
-            let name = project.name.clone();
             let path = project.path.clone();
 
-            state.output = format!("Building {}...\n", name);
+            state.output.push_str("\n────────────────────────────\n");
+            state.output.push_str("Building...\n");
 
             let executor = TestExecutor::new(&path);
             *executor_rx = Some(executor.build());
@@ -344,7 +335,6 @@ fn run_failed_tests(
 ) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
-            let name = project.name.clone();
             let path = project.path.clone();
 
             // Mark failed tests as running
@@ -361,7 +351,9 @@ fn run_failed_tests(
                 }
             }
 
-            state.output = format!("Re-running {} failed tests for {}...\n", failed_count, name);
+            state.output.push_str("\n────────────────────────────\n");
+            state.output.push_str(&format!("Re-running {} failed...\n", failed_count));
+            state.test_progress = Some((0, failed_count));
 
             let executor = TestExecutor::new(&path);
             *executor_rx = Some(executor.run());

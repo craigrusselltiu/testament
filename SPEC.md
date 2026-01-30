@@ -774,17 +774,16 @@ pub struct CursorPosition {
 
 | Key                 | Action                     |
 |---------------------|----------------------------|
-| `j` / `↓`           | Move down                  |
-| `k` / `↑`           | Move up                    |
-| `h` / `←`           | Collapse / parent          |
-| `l` / `→` / `Enter` | Expand / details           |
-| `Space`             | Toggle selection (add/remove from multi-select) |
+| `↓`                 | Move down                  |
+| `↑`                 | Move up                    |
+| `Space`             | Toggle (collapse class or select test) |
 | `b`                 | Build project only         |
 | `r`                 | Run selected tests (or test at cursor if none selected) |
 | `R`                 | Run all tests              |
 | `a`                 | Run failed again           |
 | `c`                 | Clear selection            |
 | `w`                 | Toggle watch mode          |
+| `x`                 | Clear output               |
 | `P`                 | Run full project (PR mode) |
 | `d`                 | View diff (PR mode)        |
 | `s`                 | Skip commit (bisect mode)  |
