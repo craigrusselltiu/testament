@@ -25,6 +25,7 @@ pub struct AppState {
     pub project_state: ListState,
     pub test_state: ListState,
     pub output: String,
+    pub output_scroll: u16,
     pub theme: Theme,
     pub active_pane: Pane,
     pub collapsed_classes: HashSet<String>,
@@ -46,6 +47,7 @@ impl AppState {
             project_state,
             test_state: ListState::default(),
             output: String::new(),
+            output_scroll: 0,
             theme: Theme::default(),
             active_pane: Pane::Projects,
             collapsed_classes: HashSet::new(),
@@ -128,6 +130,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.output,
         &state.theme,
         state.active_pane == Pane::Output,
+        state.output_scroll,
     );
     frame.render_widget(output_pane, chunks[2]);
 
@@ -140,6 +143,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         let failed_count = state.last_failed.len();
         let mut parts = vec![
             "q:quit",
+            "b:build",
             "r:run",
             "w:watch",
             "Tab:switch",

@@ -11,11 +11,12 @@ pub struct OutputPane<'a> {
     content: &'a str,
     theme: &'a Theme,
     focused: bool,
+    scroll: u16,
 }
 
 impl<'a> OutputPane<'a> {
-    pub fn new(content: &'a str, theme: &'a Theme, focused: bool) -> Self {
-        Self { content, theme, focused }
+    pub fn new(content: &'a str, theme: &'a Theme, focused: bool, scroll: u16) -> Self {
+        Self { content, theme, focused, scroll }
     }
 }
 
@@ -35,7 +36,8 @@ impl Widget for OutputPane<'_> {
                     .border_style(border_style),
             )
             .style(Style::default().fg(self.theme.fg))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll, 0));
 
         Widget::render(paragraph, area, buf);
     }

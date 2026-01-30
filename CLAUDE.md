@@ -125,11 +125,17 @@ Work is done in feature branches and merged via PR to `main` at the end of each 
 - Git bisect for failing tests
 - JSON output, multi-target framework grouping
 
+## Documentation
+
+When making functional changes:
+- Update SPEC.md if adding/changing features or keybindings
+- Add entry to CHANGELOG.md following Keep a Changelog format
+
 ## Core Concepts
 
 - **Test Discovery**: Searches for `.sln` files, parses for test projects, or falls back to globbing for `*Tests.csproj`
 - **Framework Support**: xUnit, NUnit, MSTest - detected via csproj package references
-- **Output Streaming**: Real-time test output via `dotnet test --verbosity normal`
+- **Output Streaming**: Real-time test output via `dotnet test --verbosity minimal` (build noise filtered)
 - **PR Mode**: `testament pr <url|number>` - fetches PR diff, identifies changed tests, runs only those
 - **Bisect Mode**: `testament bisect <test>` - binary search through git history to find failing commit
 - **Configuration**: `.testament.toml` for project settings, watch patterns, runner options
