@@ -79,9 +79,14 @@ impl TestExecutor {
             // Add filter if specific tests are selected
             if let Some(tests) = test_filter {
                 if !tests.is_empty() {
+                    // Strip parameterized test arguments (everything in parentheses)
+                    // to avoid special character issues with MSBuild
                     let filter = tests
                         .iter()
-                        .map(|t| format!("FullyQualifiedName={}", t))
+                        .map(|t| {
+                            let base_name = t.split('(').next().unwrap_or(t);
+                            format!("FullyQualifiedName~{}", base_name)
+                        })
                         .collect::<Vec<_>>()
                         .join("|");
                     cmd.args(["--filter", &filter]);
@@ -149,7 +154,7 @@ fn should_show_line(line: &str) -> bool {
         return false;
     }
 
-    // Skip common MSBuild noise
+    // Skip common MSBuild/dotnet noise
     let skip_patterns = [
         "Build started",
         "Build succeeded",
@@ -162,6 +167,19 @@ fn should_show_line(line: &str) -> bool {
         "Starting test execution",
         "A total of ",
         "Results File:",
+        "All projects are up-to-date",
+        "up-to-date for restore",
+        "NuGet.targets",
+        "Test run for ",
+        "VSTest",
+        "Attachments:",
+        // xUnit specific noise
+        "[xUnit.net ",
+        "Error Message:",
+        "Stack Trace:",
+        "Expected:",
+        "Actual:",
+        "Assert.",
     ];
 
     for pattern in skip_patterns {
@@ -172,6 +190,26 @@ fn should_show_line(line: &str) -> bool {
 
     // Skip lines that look like project paths being built
     if trimmed.ends_with(".csproj") || trimmed.ends_with(".sln") {
+        return false;
+    }
+
+    // Skip build output paths (e.g., "Example -> E:\...\Example.dll")
+    if trimmed.contains(" -> ") && trimmed.ends_with(".dll") {
+        return false;
+    }
+
+    // Skip stack trace lines
+    if trimmed.starts_with("at ") || trimmed.starts_with("--- ") {
+        return false;
+    }
+
+    // Skip lines that are just file paths with line numbers (stack traces)
+    if trimmed.contains(":line ") {
+        return false;
+    }
+
+    // Skip "Skipped" lines from test output (detailed skip info)
+    if trimmed.starts_with("Skipped ") {
         return false;
     }
 
