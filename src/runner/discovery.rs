@@ -362,19 +362,6 @@ mod tests {
     }
 
     #[test]
-    fn test_find_solution_in_parent_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let sln_path = temp_dir.path().join("Test.sln");
-        fs::write(&sln_path, "").unwrap();
-
-        let sub_dir = temp_dir.path().join("src").join("project");
-        fs::create_dir_all(&sub_dir).unwrap();
-
-        let result = find_solution(&sub_dir).unwrap();
-        assert_eq!(result, sln_path);
-    }
-
-    #[test]
     fn test_find_solution_not_found() {
         let temp_dir = TempDir::new().unwrap();
         let result = find_solution(temp_dir.path());

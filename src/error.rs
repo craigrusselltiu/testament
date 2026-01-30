@@ -13,9 +13,6 @@ pub enum TestamentError {
         source: std::io::Error,
     },
 
-    #[error("Failed to parse solution file: {0}")]
-    SolutionParse(String),
-
     #[error("Failed to run dotnet: {0}")]
     DotnetExecution(String),
 
@@ -37,7 +34,10 @@ mod tests {
     #[test]
     fn test_no_solution_found_display() {
         let error = TestamentError::NoSolutionFound;
-        assert_eq!(format!("{}", error), "No solution file found");
+        assert_eq!(
+            format!("{}", error),
+            "No .sln or .csproj file found in the specified directory. Run 'testament <path>' with a path to a solution file, project file, or a directory containing one."
+        );
     }
 
     #[test]
@@ -84,27 +84,6 @@ mod tests {
         use std::error::Error;
         let source = error.source();
         assert!(source.is_some());
-    }
-
-    // SolutionParse tests
-    #[test]
-    fn test_solution_parse_display() {
-        let error = TestamentError::SolutionParse("Invalid format".to_string());
-        assert_eq!(format!("{}", error), "Failed to parse solution file: Invalid format");
-    }
-
-    #[test]
-    fn test_solution_parse_debug() {
-        let error = TestamentError::SolutionParse("Parse error".to_string());
-        let debug_str = format!("{:?}", error);
-        assert!(debug_str.contains("SolutionParse"));
-        assert!(debug_str.contains("Parse error"));
-    }
-
-    #[test]
-    fn test_solution_parse_empty_message() {
-        let error = TestamentError::SolutionParse(String::new());
-        assert_eq!(format!("{}", error), "Failed to parse solution file: ");
     }
 
     // DotnetExecution tests
@@ -215,7 +194,6 @@ mod tests {
     fn test_different_error_variants() {
         let errors: Vec<TestamentError> = vec![
             TestamentError::NoSolutionFound,
-            TestamentError::SolutionParse("test".to_string()),
             TestamentError::DotnetExecution("test".to_string()),
             TestamentError::TrxParse("test".to_string()),
             TestamentError::Io(IoError::new(ErrorKind::Other, "test")),

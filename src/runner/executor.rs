@@ -4,7 +4,6 @@ use std::io::{BufRead, BufReader};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
-use crate::error::{Result, TestamentError};
 use crate::parser::{parse_trx, TestResult};
 
 pub enum ExecutorEvent {
@@ -167,32 +166,4 @@ fn should_show_line(line: &str) -> bool {
     }
 
     true
-}
-
-pub fn run_tests(project_path: &Path) -> Result<Vec<TestResult>> {
-    let trx_path = std::env::temp_dir().join("testament_results.trx");
-
-    let output = Command::new("dotnet")
-        .args([
-            "test",
-            "--logger",
-            &format!("trx;LogFileName={}", trx_path.display()),
-        ])
-        .arg(project_path)
-        .output()
-        .map_err(|e| TestamentError::DotnetExecution(e.to_string()))?;
-
-    if !output.status.success() {
-        // Tests may have failed, but we still want to parse results
-    }
-
-    let content = std::fs::read_to_string(&trx_path).map_err(|e| {
-        TestamentError::TrxParse(format!("Failed to read TRX file: {}", e))
-    })?;
-
-    let results = parse_trx(&content)?;
-
-    let _ = std::fs::remove_file(&trx_path);
-
-    Ok(results)
 }

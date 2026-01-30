@@ -4,6 +4,5 @@ mod projects;
 pub mod tests;
 mod theme;
 
-pub use layout::{draw, AppState, Pane};
+pub use layout::{draw, Pane};
 pub use tests::{build_test_items, TestListItem};
-pub use theme::Theme;

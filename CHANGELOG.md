@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v0.2.1 - 2026-01-30
+
+### Changed
+- Remove all compiler warnings by removing unused code
+- Remove config module (will be re-added when .testament.toml feature is complete)
+
+### Removed
+- Unused `SolutionParse` error variant
+- Unused `run_tests` synchronous function
+- Unused `bg` field from Theme struct
+- Unused imports
+
+### Fixed
+- Fix `test_no_solution_found_display` test to match updated error message
+- Remove obsolete `test_find_solution_in_parent_directory` test (parent directory search was intentionally removed)
+
 ## v0.2.0 - 2026-01-30
 
 ### Added
