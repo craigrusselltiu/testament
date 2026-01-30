@@ -101,6 +101,8 @@ pub struct AppState {
     pub test_state: ListState,
     pub output: String,
     pub output_scroll: u16,
+    pub output_visible_lines: u16,
+    pub output_width: u16,
     pub theme: Theme,
     pub active_pane: Pane,
     pub collapsed_classes: HashSet<String>,
@@ -124,6 +126,8 @@ impl AppState {
             test_state: ListState::default(),
             output: String::new(),
             output_scroll: 0,
+            output_visible_lines: 20,
+            output_width: 80,
             theme: Theme::default(),
             active_pane: Pane::Projects,
             collapsed_classes: HashSet::new(),
@@ -134,6 +138,24 @@ impl AppState {
             last_failed: HashSet::new(),
             test_progress: None,
         }
+    }
+
+    pub fn append_output(&mut self, text: &str) {
+        self.output.push_str(text);
+        self.scroll_output_to_bottom();
+    }
+
+    pub fn scroll_output_to_bottom(&mut self) {
+        // Account for line wrapping by calculating actual rendered lines
+        let content_width = self.output_width.saturating_sub(2) as usize; // subtract borders
+        let wrapped_lines: u16 = self.output.lines().map(|line| {
+            if content_width == 0 || line.is_empty() {
+                1
+            } else {
+                ((line.len() + content_width - 1) / content_width) as u16
+            }
+        }).sum();
+        self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
     }
 
     #[cfg(test)]
@@ -204,6 +226,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     frame.render_stateful_widget(test_list, chunks[1], &mut state.test_state);
 
     // Right pane: Output
+    // Track dimensions for auto-scroll (subtract 2 for borders)
+    state.output_visible_lines = chunks[2].height.saturating_sub(2);
+    state.output_width = chunks[2].width;
     let output_pane = OutputPane::new(
         &state.output,
         &state.theme,

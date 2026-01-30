@@ -36,7 +36,7 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
         if state.watch_mode {
             if let Some(ref watcher) = file_watcher {
                 if watcher.try_recv() && executor_rx.is_none() {
-                    state.output.push_str("\n[Watch] File change detected, running tests...\n");
+                    state.append_output("\n[Watch] File change detected, running tests...\n");
                     run_tests(&mut state, &mut executor_rx);
                 }
             }
@@ -54,19 +54,14 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                                 *completed += 1;
                             }
                         } else {
-                            state.output.push('\n');
-                            state.output.push_str(&line);
+                            state.append_output(&format!("\n{}", line));
                         }
-                    }
-                    ExecutorEvent::Status(msg) => {
-                        state.output.push('\n');
-                        state.output.push_str(&msg);
                     }
                     ExecutorEvent::BuildCompleted(success) => {
                         if success {
-                            state.output.push_str("\nBuild succeeded");
+                            state.append_output("\nBuild succeeded");
                         } else {
-                            state.output.push_str("\nBuild FAILED");
+                            state.append_output("\nBuild FAILED");
                         }
                         executor_rx = None;
                         break;
@@ -86,7 +81,7 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                         break;
                     }
                     ExecutorEvent::Error(e) => {
-                        state.output.push_str(&format!("\nError: {}", e));
+                        state.append_output(&format!("\nError: {}", e));
                         executor_rx = None;
                         break;
                     }
@@ -171,11 +166,11 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                             match FileWatcher::new(&solution_dir) {
                                 Ok(watcher) => {
                                     file_watcher = Some(watcher);
-                                    state.output.push_str("\n[Watch] Watch mode enabled\n");
+                                    state.append_output("\n[Watch] Watch mode enabled\n");
                                 }
                                 Err(e) => {
                                     state.watch_mode = false;
-                                    state.output.push_str(&format!(
+                                    state.append_output(&format!(
                                         "\n[Watch] Failed to enable watch mode: {}\n",
                                         e
                                     ));
@@ -183,7 +178,7 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                             }
                         } else {
                             file_watcher = None;
-                            state.output.push_str("\n[Watch] Watch mode disabled\n");
+                            state.append_output("\n[Watch] Watch mode disabled\n");
                         }
                     }
                     KeyCode::Char('r') => {
@@ -303,12 +298,17 @@ fn run_tests(
             state.selected_tests.len()
         };
 
-        state.output.push_str("\n────────────────────────────\n");
-        state.output.push_str("Running tests...\n");
+        state.append_output("\n────────────────────────────\n");
+        state.append_output("Running tests...\n");
         state.test_progress = Some((0, total_tests));
 
         let executor = TestExecutor::new(&path);
-        *executor_rx = Some(executor.run());
+        let filter = if state.selected_tests.is_empty() {
+            None
+        } else {
+            Some(state.selected_tests.iter().cloned().collect())
+        };
+        *executor_rx = Some(executor.run(filter));
     }
 }
 
@@ -320,8 +320,8 @@ fn build_project(
         if let Some(project) = state.projects.get(idx) {
             let path = project.path.clone();
 
-            state.output.push_str("\n────────────────────────────\n");
-            state.output.push_str("Building...\n");
+            state.append_output("\n────────────────────────────\n");
+            state.append_output("Building...\n");
 
             let executor = TestExecutor::new(&path);
             *executor_rx = Some(executor.build());
@@ -351,12 +351,13 @@ fn run_failed_tests(
                 }
             }
 
-            state.output.push_str("\n────────────────────────────\n");
-            state.output.push_str(&format!("Re-running {} failed...\n", failed_count));
+            state.append_output("\n────────────────────────────\n");
+            state.append_output(&format!("Re-running {} failed...\n", failed_count));
             state.test_progress = Some((0, failed_count));
 
             let executor = TestExecutor::new(&path);
-            *executor_rx = Some(executor.run());
+            let filter: Vec<String> = state.last_failed.iter().cloned().collect();
+            *executor_rx = Some(executor.run(Some(filter)));
         }
     }
 }
