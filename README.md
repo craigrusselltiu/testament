@@ -90,11 +90,11 @@ Testament will automatically:
 | `r` | Run tests (all or selected) |
 | `a` | Run failed tests from last run |
 | `w` | Toggle watch mode |
-| `j` / `k` / `Arrow keys` | Move down / up |
+| `x` | Clear output |
+| `Arrow keys` | Navigate up/down |
 | `Tab` | Switch to next pane |
 | `Shift+Tab` | Switch to previous pane |
-| `h` / `l` | Collapse / expand test class |
-| `Space` | Toggle test selection |
+| `Space` | Toggle collapse (on class) or select (on test) |
 | `c` | Clear all selections |
 | `/` | Start filter mode |
 | `Esc` | Clear filter |
@@ -110,7 +110,7 @@ Use `Tab` and `Shift+Tab` to move between panes.
 ### Running Specific Tests
 
 1. Navigate to the Tests pane with `Tab`
-2. Use `j`/`k` to navigate to a test
+2. Use arrow keys to navigate to a test
 3. Press `Space` to select it (repeat for multiple tests)
 4. Press `r` to run only selected tests
 5. Press `c` to clear selection

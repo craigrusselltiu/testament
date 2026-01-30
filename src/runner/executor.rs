@@ -8,7 +8,6 @@ use crate::parser::{parse_trx, TestResult};
 
 pub enum ExecutorEvent {
     OutputLine(String),
-    Status(String),
     BuildCompleted(bool),
     Completed(Vec<TestResult>),
     Error(String),
@@ -30,8 +29,6 @@ impl TestExecutor {
         let project_path = self.project_path.clone();
 
         thread::spawn(move || {
-            let _ = tx.send(ExecutorEvent::Status("Building...".to_string()));
-
             let output = match Command::new("dotnet")
                 .args(["build", "--verbosity", "minimal"])
                 .arg(&project_path)
@@ -63,24 +60,37 @@ impl TestExecutor {
         rx
     }
 
-    pub fn run(&self) -> Receiver<ExecutorEvent> {
+    pub fn run(&self, test_filter: Option<Vec<String>>) -> Receiver<ExecutorEvent> {
         let (tx, rx) = mpsc::channel();
         let project_path = self.project_path.clone();
 
         thread::spawn(move || {
-            let _ = tx.send(ExecutorEvent::Status("Running tests...".to_string()));
-
             let trx_path = std::env::temp_dir().join("testament_results.trx");
 
-            let mut child = match Command::new("dotnet")
-                .args([
-                    "test",
-                    "--logger",
-                    &format!("trx;LogFileName={}", trx_path.display()),
-                    "--verbosity",
-                    "minimal",
-                ])
-                .arg(&project_path)
+            let mut cmd = Command::new("dotnet");
+            cmd.args([
+                "test",
+                "--logger",
+                &format!("trx;LogFileName={}", trx_path.display()),
+                "--verbosity",
+                "minimal",
+            ]);
+
+            // Add filter if specific tests are selected
+            if let Some(tests) = test_filter {
+                if !tests.is_empty() {
+                    let filter = tests
+                        .iter()
+                        .map(|t| format!("FullyQualifiedName={}", t))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    cmd.args(["--filter", &filter]);
+                }
+            }
+
+            cmd.arg(&project_path);
+
+            let mut child = match cmd
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
