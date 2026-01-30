@@ -6,9 +6,7 @@
 
 **Testament** is a terminal-based test runner wrapper for .NET.
 
-It treats test results as evidence; passing tests stand, and failing tests guide the work ahead.
-
-When the run is over, the testament stands.
+It treats test results as evidence; passing tests stand as a testament to correctness, and failing tests guide the work ahead.
 
 ## Overview
 
