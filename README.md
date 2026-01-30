@@ -4,6 +4,12 @@
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+**Testament** is a terminal-based test runner wrapper for .NET.
+
+It treats test results as evidence; passing tests stand, and failing tests guide the work ahead.
+
+When the run is over, the testament stands.
+
 ## Overview
 
 Testament is a terminal UI application for discovering, running, and monitoring .NET tests. It wraps `dotnet test` with an interactive interface featuring real-time output streaming, watch mode, and keyboard-driven navigation.

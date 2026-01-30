@@ -130,7 +130,7 @@ Work is done in feature branches and merged via PR to `main` at the end of each 
 
 When making functional changes:
 - Update SPEC.md if adding/changing features or keybindings
-- Update README.md if changing user-facing behavior (keybindings, usage, installation)
+- Update README.md if changing user-facing behavior (keybindings, usage, installation) and when updating version
 - Add entry to CHANGELOG.md following Keep a Changelog format
 
 ## Core Concepts
