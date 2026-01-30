@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v0.3.1 - 2026-01-31
+
+### Added
+- `x` keybinding to clear output window
+- Progress bar during test runs showing completion status (e.g., `[████░░░░] 5/10`)
+- StatusDemoTests.cs example file demonstrating passing, failing, and skipped tests
+
+### Changed
+- Output window now appends instead of replacing on each run (use `x` to clear)
+- Space key now toggles collapse/expand when a class is selected
+- Simplified status messages ("Running tests..." instead of "Running all tests for ProjectName...")
+- Status bar updated: "Space:toggle" instead of "Space:select"
+
+### Removed
+- `j`/`k` vim-style navigation (use arrow keys)
+- `h`/`l` vim-style collapse/expand (use Space on class)
+- Results summary line after test completion (redundant with test tree display)
+
 ## v0.3.0 - 2026-01-30
 
 ### Added
