@@ -76,6 +76,7 @@ src/
 - Avoid over-engineering: no excessive error handling for impossible cases, no premature optimization, no "just in case" flexibility.
 - When in doubt, write less code. A 50-line solution is better than a 200-line "robust" one.
 - Shell out to `dotnet` and `git` CLIs where practical rather than reimplementing their logic.
+- Don't use `#[allow(dead_code)]` to silence warnings. Remove unused code instead. Use `#[cfg(test)]` for code only needed in tests.
 
 ## File Size Guidelines
 

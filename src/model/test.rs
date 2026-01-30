@@ -36,6 +36,7 @@ pub struct TestClass {
 }
 
 impl TestClass {
+    #[cfg(test)]
     pub fn new(name: String, namespace: String) -> Self {
         Self {
             name,

@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
-    widgets::{Block, Borders, ListState, Paragraph},
+    widgets::{ListState, Paragraph},
     Frame,
 };
 
@@ -59,6 +59,7 @@ impl AppState {
         }
     }
 
+    #[cfg(test)]
     pub fn selected_project(&self) -> Option<&TestProject> {
         self.project_state
             .selected()

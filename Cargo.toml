@@ -1,6 +1,6 @@
 [package]
 name = "testament"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "A TUI for discovering, running, and monitoring .NET tests"
 license = "MIT"
@@ -10,8 +10,6 @@ ratatui = "0.29"
 crossterm = "0.28"
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
 quick-xml = "0.37"
 thiserror = "2"
 notify = "7"
