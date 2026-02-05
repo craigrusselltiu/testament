@@ -105,6 +105,7 @@ pub struct AppState {
     pub output_scroll: u16,
     pub output_visible_lines: u16,
     pub output_width: u16,
+    pub output_auto_scroll: bool,
     pub test_result_scroll: u16,
     pub theme: Theme,
     pub active_pane: Pane,
@@ -133,6 +134,7 @@ impl AppState {
             output_scroll: 0,
             output_visible_lines: 0,  // Set during first draw
             output_width: 80,
+            output_auto_scroll: false,  // Enabled when tests/builds start
             test_result_scroll: 0,
             theme: Theme::default(),
             active_pane: Pane::Projects,
@@ -150,7 +152,9 @@ impl AppState {
 
     pub fn append_output(&mut self, text: &str) {
         self.output.push_str(text);
-        self.scroll_output_to_bottom();
+        if self.output_auto_scroll {
+            self.scroll_output_to_bottom();
+        }
     }
 
     pub fn scroll_output_to_bottom(&mut self) {

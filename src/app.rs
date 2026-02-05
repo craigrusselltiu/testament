@@ -57,6 +57,21 @@ pub fn run(
                             project.classes = classes;
                         }
                     }
+                    DiscoveryEvent::ProjectError(idx, error) => {
+                        // Log the error to the output pane (first 3 lines for brevity)
+                        if let Some(project) = state.projects.get(idx) {
+                            let error_preview: String = error
+                                .lines()
+                                .take(3)
+                                .collect::<Vec<_>>()
+                                .join("\n  ");
+                            state.append_output(&format!(
+                                "\n[Discovery] {} failed:\n  {}\n",
+                                project.name,
+                                error_preview
+                            ));
+                        }
+                    }
                     DiscoveryEvent::Complete => {
                         state.discovering = false;
                         state.status = "Ready".to_string();
@@ -407,6 +422,7 @@ fn run_tests(
             (None, count)
         };
 
+        state.output_auto_scroll = true;
         state.append_output("\n────────────────────────────\n");
         state.append_output("Running tests...\n");
         state.test_progress = Some((0, total_tests));
@@ -424,6 +440,7 @@ fn build_project(
         if let Some(project) = state.projects.get(idx) {
             let path = project.path.clone();
 
+            state.output_auto_scroll = true;
             state.append_output("\n────────────────────────────\n");
             state.append_output("Building...\n");
 
@@ -455,6 +472,7 @@ fn run_failed_tests(
                 }
             }
 
+            state.output_auto_scroll = true;
             state.append_output("\n────────────────────────────\n");
             state.append_output(&format!("Re-running {} failed...\n", failed_count));
             state.test_progress = Some((0, failed_count));
@@ -612,8 +630,9 @@ fn run_class_tests(
             }
         }
 
+        state.output_auto_scroll = true;
         state.append_output("\n────────────────────────────\n");
-        state.append_output(&format!("Running {} tests in class...\n", test_count));
+        state.append_output(&format!("Running {} test(s)...\n", test_count));
         state.test_progress = Some((0, test_count));
 
         let executor = TestExecutor::new(&path);
