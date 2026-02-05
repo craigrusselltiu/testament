@@ -18,6 +18,7 @@ pub struct TestList<'a> {
     collapsed: &'a HashSet<String>,
     selected: &'a HashSet<String>,
     filter: &'a str,
+    filter_lower: String,
     project_name: &'a str,
 }
 
@@ -38,6 +39,7 @@ impl<'a> TestList<'a> {
             collapsed,
             selected,
             filter,
+            filter_lower: filter.to_lowercase(),
             project_name,
         }
     }
@@ -97,10 +99,10 @@ impl<'a> TestList<'a> {
     }
 
     fn matches_filter(&self, name: &str) -> bool {
-        if self.filter.is_empty() {
+        if self.filter_lower.is_empty() {
             return true;
         }
-        name.to_lowercase().contains(&self.filter.to_lowercase())
+        name.to_lowercase().contains(&self.filter_lower)
     }
 }
 
@@ -234,7 +236,9 @@ pub fn build_test_items(
     filter: &str,
     project_name: &str,
 ) -> Vec<TestListItem> {
-    let mut items = Vec::new();
+    // Estimate capacity: classes + average tests per class
+    let estimated_capacity = classes.len() + classes.iter().map(|c| c.tests.len()).sum::<usize>();
+    let mut items = Vec::with_capacity(estimated_capacity);
     let filter_lower = filter.to_lowercase();
 
     // Sort classes alphabetically by full name

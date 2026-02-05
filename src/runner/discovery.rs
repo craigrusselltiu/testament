@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::error::{Result, TestamentError};
 use crate::model::{Test, TestClass, TestProject};
@@ -176,8 +178,13 @@ pub fn discover_projects_from_paths(project_paths: Vec<PathBuf>) -> Result<(Vec<
 }
 
 /// Run `dotnet test --list-tests` to get test names.
-/// First tries with --no-build for speed, falls back to building if that fails.
+/// First tries cache, then --no-build for speed, falls back to building if that fails.
 fn list_tests(project_path: &Path) -> Result<Vec<String>> {
+    // Try cache first
+    if let Some(cached) = load_cache(project_path) {
+        return Ok(cached);
+    }
+    
     let project_dir = project_path.parent().unwrap_or(Path::new("."));
     
     // First try without building (fast if already built)
@@ -232,7 +239,59 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
         }
     }
 
+    // Save to cache for next time
+    save_cache(project_path, &tests);
+    
     Ok(tests)
+}
+
+/// Get cache file path for a project
+fn get_cache_path(project_path: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    project_path.hash(&mut hasher);
+    let hash = hasher.finish();
+    std::env::temp_dir().join(format!("testament_discovery_{:x}.cache", hash))
+}
+
+/// Get the modification time of a project (csproj + any cs files)
+fn get_project_mtime(project_path: &Path) -> Option<u64> {
+    let csproj_mtime = std::fs::metadata(project_path)
+        .and_then(|m| m.modified())
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(csproj_mtime)
+}
+
+/// Try to load cached test list
+fn load_cache(project_path: &Path) -> Option<Vec<String>> {
+    let cache_path = get_cache_path(project_path);
+    let content = std::fs::read_to_string(&cache_path).ok()?;
+    let mut lines = content.lines();
+    
+    // First line is the mtime
+    let cached_mtime: u64 = lines.next()?.parse().ok()?;
+    let current_mtime = get_project_mtime(project_path)?;
+    
+    if cached_mtime != current_mtime {
+        return None; // Cache is stale
+    }
+    
+    Some(lines.map(|s| s.to_string()).collect())
+}
+
+/// Save test list to cache
+fn save_cache(project_path: &Path, tests: &[String]) {
+    let Some(mtime) = get_project_mtime(project_path) else { return };
+    let cache_path = get_cache_path(project_path);
+    
+    let content = std::iter::once(mtime.to_string())
+        .chain(tests.iter().cloned())
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    let _ = std::fs::write(cache_path, content);
 }
 
 /// Group test names by their class using C# source parsing info.
