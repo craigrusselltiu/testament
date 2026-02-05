@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crossterm::{
@@ -11,10 +12,14 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
-use crate::runner::{ExecutorEvent, FileWatcher, TestExecutor};
-use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_ready_phrase}, Pane, TestListItem};
+use crate::runner::{DiscoveryEvent, ExecutorEvent, FileWatcher, TestExecutor};
+use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_startup_phrase, random_ready_phrase}, Pane, TestListItem};
 
-pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> {
+pub fn run(
+    projects: Vec<TestProject>,
+    solution_dir: PathBuf,
+    discovery_rx: mpsc::Receiver<DiscoveryEvent>,
+) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -23,14 +28,43 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AppState::new(projects);
-    state.output = format!("{}\n{}", startup_art(), random_ready_phrase());
+    state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
+    state.discovering = true;
+    state.status = "Discovering tests...".to_string();
 
-    let mut executor_rx: Option<std::sync::mpsc::Receiver<ExecutorEvent>> = None;
+    let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
 
     // Main loop
     loop {
         terminal.draw(|f| ui::draw(f, &mut state))?;
+
+        // Check for discovery events (background test discovery)
+        if state.discovering {
+            while let Ok(event) = discovery_rx.try_recv() {
+                match event {
+                    DiscoveryEvent::ProjectDiscovered(idx, classes) => {
+                        // Add all class names to collapsed set (start collapsed)
+                        for class in &classes {
+                            let class_full_name = if class.namespace.is_empty() {
+                                class.name.clone()
+                            } else {
+                                format!("{}.{}", class.namespace, class.name)
+                            };
+                            state.collapsed_classes.insert(class_full_name);
+                        }
+                        if let Some(project) = state.projects.get_mut(idx) {
+                            project.classes = classes;
+                        }
+                    }
+                    DiscoveryEvent::Complete => {
+                        state.discovering = false;
+                        state.status = "Ready".to_string();
+                        state.append_output(&format!("\n{}", random_ready_phrase()));
+                    }
+                }
+            }
+        }
 
         // Check for file changes in watch mode
         if state.watch_mode {
@@ -53,9 +87,8 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                             if let Some((completed, _)) = &mut state.test_progress {
                                 *completed += 1;
                             }
-                        } else {
-                            state.append_output(&format!("\n{}", line));
                         }
+                        // Ignore other dotnet output lines
                     }
                     ExecutorEvent::BuildCompleted(success) => {
                         if success {
@@ -206,6 +239,13 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
                     }
                     KeyCode::Char('r') => {
                         if executor_rx.is_none() {
+                            // Check if a class is selected in the Tests pane
+                            if state.active_pane == Pane::Tests {
+                                if let Some(class_tests) = get_selected_class_tests(&state) {
+                                    run_class_tests(&mut state, &mut executor_rx, class_tests);
+                                    continue;
+                                }
+                            }
                             run_tests(&mut state, &mut executor_rx);
                         }
                     }
@@ -474,5 +514,63 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
                 }
             }
         }
+    }
+}
+
+/// Get the tests for the currently selected class, if a class is selected.
+fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
+    let project_idx = state.project_state.selected()?;
+    let project = state.projects.get(project_idx)?;
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let selected_idx = state.test_state.selected()?;
+    let item = items.get(selected_idx)?;
+
+    if let TestListItem::Class(class_full_name) = item {
+        // Find the class and collect all its test full names
+        for class in &project.classes {
+            if class.full_name() == *class_full_name {
+                let tests: Vec<String> = class.tests.iter().map(|t| t.full_name.clone()).collect();
+                if !tests.is_empty() {
+                    return Some(tests);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Run tests for a specific class.
+fn run_class_tests(
+    state: &mut AppState,
+    executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
+    tests: Vec<String>,
+) {
+    if let Some(idx) = state.project_state.selected() {
+        let path = if let Some(project) = state.projects.get(idx) {
+            project.path.clone()
+        } else {
+            return;
+        };
+
+        let test_count = tests.len();
+
+        // Mark these tests as running
+        if let Some(project) = state.projects.get_mut(idx) {
+            for class in &mut project.classes {
+                for test in &mut class.tests {
+                    if tests.contains(&test.full_name) {
+                        test.status = TestStatus::Running;
+                    }
+                }
+            }
+        }
+
+        state.append_output("\n────────────────────────────\n");
+        state.append_output(&format!("Running {} tests in class...\n", test_count));
+        state.test_progress = Some((0, test_count));
+
+        let executor = TestExecutor::new(&path);
+        *executor_rx = Some(executor.run(Some(tests)));
     }
 }

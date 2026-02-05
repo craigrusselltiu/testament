@@ -13,11 +13,12 @@ pub struct ProjectList<'a> {
     projects: &'a [TestProject],
     theme: &'a Theme,
     focused: bool,
+    discovering: bool,
 }
 
 impl<'a> ProjectList<'a> {
-    pub fn new(projects: &'a [TestProject], theme: &'a Theme, focused: bool) -> Self {
-        Self { projects, theme, focused }
+    pub fn new(projects: &'a [TestProject], theme: &'a Theme, focused: bool, discovering: bool) -> Self {
+        Self { projects, theme, focused, discovering }
     }
 }
 
@@ -29,7 +30,13 @@ impl StatefulWidget for ProjectList<'_> {
             .projects
             .iter()
             .map(|p| {
-                let line = Line::from(format!("{} ({})", p.name, p.test_count()));
+                let count = p.test_count();
+                let display = if count == 0 && self.discovering {
+                    format!("{} (...)", p.name)
+                } else {
+                    format!("{} ({})", p.name, count)
+                };
+                let line = Line::from(display);
                 ListItem::new(line)
             })
             .collect();

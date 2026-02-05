@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Modifier, Style},
     widgets::{ListState, Paragraph},
     Frame,
@@ -112,6 +112,8 @@ pub struct AppState {
     pub watch_mode: bool,
     pub last_failed: HashSet<String>,
     pub test_progress: Option<(usize, usize)>,
+    pub discovering: bool,
+    pub status: String,
 }
 
 impl AppState {
@@ -137,6 +139,8 @@ impl AppState {
             watch_mode: false,
             last_failed: HashSet::new(),
             test_progress: None,
+            discovering: false,
+            status: "Ready".to_string(),
         }
     }
 
@@ -206,6 +210,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.projects,
         &state.theme,
         state.active_pane == Pane::Projects,
+        state.discovering,
     );
     frame.render_stateful_widget(project_list, chunks[0], &mut state.project_state);
 
@@ -238,9 +243,14 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     );
     frame.render_widget(output_pane, chunks[2]);
 
-    // Status bar
+    // Status bar - split into left (keybindings) and right (status)
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(state.status.len() as u16 + 2)])
+        .split(main_chunks[1]);
+
     let watch_indicator = if state.watch_mode { "[WATCH] " } else { "" };
-    let status = if state.filter_active {
+    let left_status = if state.filter_active {
         format!("{}Filter: {}_", watch_indicator, state.filter)
     } else {
         let selected_count = state.selected_tests.len();
@@ -267,9 +277,14 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 
         format!("{}{}{}", watch_indicator, parts.join("  "), suffix)
     };
-    let status_bar = Paragraph::new(status)
+    let left_bar = Paragraph::new(left_status)
         .style(Style::default().fg(state.theme.fg).add_modifier(Modifier::DIM));
-    frame.render_widget(status_bar, main_chunks[1]);
+    frame.render_widget(left_bar, status_chunks[0]);
+
+    let right_bar = Paragraph::new(state.status.as_str())
+        .alignment(Alignment::Right)
+        .style(Style::default().fg(state.theme.highlight));
+    frame.render_widget(right_bar, status_chunks[1]);
 }
 
 #[cfg(test)]

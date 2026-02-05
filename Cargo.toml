@@ -1,6 +1,6 @@
 [package]
 name = "testament"
-version = "0.3.3"
+version = "0.3.5"
 edition = "2021"
 description = "A TUI for discovering, running, and monitoring .NET tests"
 license = "MIT"
@@ -13,6 +13,8 @@ clap = { version = "4", features = ["derive"] }
 quick-xml = "0.37"
 thiserror = "2"
 notify = "7"
+tree-sitter = "0.24"
+tree-sitter-c-sharp = "0.23"
 
 [dev-dependencies]
 tempfile = "3"
