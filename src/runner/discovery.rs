@@ -43,7 +43,7 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
         // First, look for .sln files
         for entry in &entries {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "sln") {
+            if path.extension().is_some_and(|ext| ext == "sln") {
                 return Ok(path);
             }
         }
@@ -51,7 +51,7 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
         // If no .sln found, look for .csproj files
         for entry in &entries {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "csproj") {
+            if path.extension().is_some_and(|ext| ext == "csproj") {
                 return Ok(path);
             }
         }
@@ -105,7 +105,7 @@ fn is_test_project_name(name: &str) -> bool {
 ///
 /// This allows the TUI to start instantly while test discovery happens in background.
 pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Receiver<DiscoveryEvent>)> {
-    let project_paths = if path.extension().map_or(false, |ext| ext == "csproj") {
+    let project_paths = if path.extension().is_some_and(|ext| ext == "csproj") {
         vec![path.to_path_buf()]
     } else {
         parse_solution(path)?

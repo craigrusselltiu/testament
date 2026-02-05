@@ -184,14 +184,16 @@ pub fn run(
                         state.active_pane = match state.active_pane {
                             Pane::Projects => Pane::Tests,
                             Pane::Tests => Pane::Output,
-                            Pane::Output => Pane::Projects,
+                            Pane::Output => Pane::TestResult,
+                            Pane::TestResult => Pane::Projects,
                         };
                     }
                     KeyCode::BackTab => {
                         state.active_pane = match state.active_pane {
-                            Pane::Projects => Pane::Output,
+                            Pane::Projects => Pane::TestResult,
                             Pane::Tests => Pane::Projects,
                             Pane::Output => Pane::Tests,
+                            Pane::TestResult => Pane::Output,
                         };
                     }
                     KeyCode::Char(' ') => {
@@ -305,6 +307,12 @@ fn move_selection(state: &mut AppState, delta: i32) {
             let current = state.output_scroll as i32;
             let new = (current + delta).max(0).min(line_count.saturating_sub(1));
             state.output_scroll = new as u16;
+        }
+        Pane::TestResult => {
+            // Scroll within the test result pane
+            let current = state.test_result_scroll as i32;
+            let new = (current + delta).max(0) as u16;
+            state.test_result_scroll = new;
         }
     }
 }

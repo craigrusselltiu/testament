@@ -8,10 +8,11 @@ use ratatui::{
     Frame,
 };
 
-use crate::model::TestProject;
+use crate::model::{Test, TestClass, TestProject};
 use crate::ui::output::OutputPane;
 use crate::ui::projects::ProjectList;
-use crate::ui::tests::TestList;
+use crate::ui::tests::{build_test_items, TestList, TestListItem};
+use crate::ui::test_result::TestResultPane;
 use crate::ui::theme::Theme;
 
 const STARTUP_ART: &str = r#"
@@ -93,6 +94,7 @@ pub enum Pane {
     Projects,
     Tests,
     Output,
+    TestResult,
 }
 
 pub struct AppState {
@@ -103,6 +105,7 @@ pub struct AppState {
     pub output_scroll: u16,
     pub output_visible_lines: u16,
     pub output_width: u16,
+    pub test_result_scroll: u16,
     pub theme: Theme,
     pub active_pane: Pane,
     pub collapsed_classes: HashSet<String>,
@@ -130,6 +133,7 @@ impl AppState {
             output_scroll: 0,
             output_visible_lines: 20,
             output_width: 80,
+            test_result_scroll: 0,
             theme: Theme::default(),
             active_pane: Pane::Projects,
             collapsed_classes: HashSet::new(),
@@ -156,7 +160,7 @@ impl AppState {
             if content_width == 0 || line.is_empty() {
                 1
             } else {
-                ((line.len() + content_width - 1) / content_width) as u16
+                line.len().div_ceil(content_width) as u16
             }
         }).sum();
         self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
@@ -230,10 +234,15 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     );
     frame.render_stateful_widget(test_list, chunks[1], &mut state.test_state);
 
-    // Right pane: Output
-    // Track dimensions for auto-scroll (subtract 2 for borders)
-    state.output_visible_lines = chunks[2].height.saturating_sub(2);
-    state.output_width = chunks[2].width;
+    // Right side: Split into Output (top 40%) and Test Result (bottom 60%)
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(chunks[2]);
+
+    // Right top: Output pane
+    state.output_visible_lines = right_chunks[0].height.saturating_sub(2);
+    state.output_width = right_chunks[0].width;
     let output_pane = OutputPane::new(
         &state.output,
         &state.theme,
@@ -241,7 +250,17 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         state.output_scroll,
         state.test_progress,
     );
-    frame.render_widget(output_pane, chunks[2]);
+    frame.render_widget(output_pane, right_chunks[0]);
+
+    // Right bottom: Test Result pane
+    let selected_test = get_selected_test(state, classes);
+    let test_result_pane = TestResultPane::new(
+        selected_test,
+        &state.theme,
+        state.active_pane == Pane::TestResult,
+        state.test_result_scroll,
+    );
+    frame.render_widget(test_result_pane, right_chunks[1]);
 
     // Status bar - split into left (keybindings) and right (status)
     let status_chunks = Layout::default()
@@ -287,10 +306,30 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     frame.render_widget(right_bar, status_chunks[1]);
 }
 
+fn get_selected_test<'a>(state: &AppState, classes: &'a [TestClass]) -> Option<&'a Test> {
+    let selected_idx = state.test_state.selected()?;
+    let items = build_test_items(classes, &state.collapsed_classes, &state.filter);
+    let item = items.get(selected_idx)?;
+    
+    match item {
+        TestListItem::Test(full_name) => {
+            // Find the test in classes
+            for class in classes {
+                for test in &class.tests {
+                    if &test.full_name == full_name {
+                        return Some(test);
+                    }
+                }
+            }
+            None
+        }
+        TestListItem::Class(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Test, TestClass};
     use std::path::PathBuf;
 
     fn create_test_project(name: &str, test_count: usize) -> TestProject {

@@ -1,6 +1,6 @@
 # Testament
 
-![Version](https://img.shields.io/badge/version-0.3.3-green)
+![Version](https://img.shields.io/badge/version-0.4.0-green)
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -110,7 +110,8 @@ Testament will automatically:
 
 1. **Projects** (left) - List of test projects in your solution
 2. **Tests** (middle) - Test classes and methods for the selected project
-3. **Output** (right) - Test execution output and results
+3. **Output** (right top) - Test execution output and build results
+4. **Test Result** (right bottom) - Details of the selected test (status, duration, errors)
 
 Use `Tab` and `Shift+Tab` to move between panes.
 

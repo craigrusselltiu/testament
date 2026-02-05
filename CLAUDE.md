@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Testament is a Rust TUI application for discovering, running, and monitoring .NET tests. It wraps `dotnet test` with a terminal interface featuring real-time output streaming, watch mode, PR-based test running, and git bisect for finding failing commits.
 
-**Status**: Phase 1 (Minimal Working TUI) is complete. The TUI can discover tests, display them, run them, and show results.
+**Status**: Phase 2 (Core Features) is mostly complete. The TUI can discover tests, display them in a four-pane layout with test class grouping, run them, and show detailed results for selected tests.
 
 ## Build and Run Commands
 
@@ -31,10 +31,11 @@ src/
 ├── config.rs            # .testament.toml parsing
 ├── error.rs             # TestamentError enum
 ├── ui/                  # Ratatui-based TUI components
-│   ├── layout.rs        # Three-pane layout (projects/tests/output)
+│   ├── layout.rs        # Four-pane layout (projects/tests/output/test_result)
 │   ├── projects.rs      # Project list widget
-│   ├── tests.rs         # Test tree widget
+│   ├── tests.rs         # Test tree widget with collapsible classes
 │   ├── output.rs        # Output pane widget
+│   ├── test_result.rs   # Test result details widget
 │   ├── pr_view.rs       # PR mode UI
 │   ├── bisect_view.rs   # Bisect mode UI
 │   └── theme.rs         # Color themes (default amber/gold, modern)
