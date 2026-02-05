@@ -163,9 +163,12 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
 
 /// Run `dotnet test --list-tests` to get test names.
 fn list_tests(project_path: &Path) -> Result<Vec<String>> {
+    let project_dir = project_path.parent().unwrap_or(Path::new("."));
+    
     let output = Command::new("dotnet")
         .args(["test", "--list-tests"])
         .arg(project_path)
+        .current_dir(project_dir)
         .output()
         .map_err(|e| TestamentError::DotnetExecution(e.to_string()))?;
 
