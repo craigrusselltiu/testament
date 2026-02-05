@@ -94,6 +94,7 @@ fn is_test_project_name(name: &str) -> bool {
 ///
 /// If `path` is a .csproj file, treats it as the single project.
 /// If `path` is a .sln file, parses it to find test projects.
+/// Test discovery runs in parallel across all projects for faster startup.
 pub fn discover_projects(path: &Path) -> Result<Vec<TestProject>> {
     let project_paths = if path.extension().map_or(false, |ext| ext == "csproj") {
         // Directly use the .csproj file
@@ -103,23 +104,35 @@ pub fn discover_projects(path: &Path) -> Result<Vec<TestProject>> {
         parse_solution(path)?
     };
 
-    let mut projects = Vec::new();
+    // Run test discovery in parallel using threads
+    let handles: Vec<_> = project_paths
+        .into_iter()
+        .map(|path| {
+            std::thread::spawn(move || {
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Unknown")
+                    .to_string();
 
-    for path in project_paths {
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("Unknown")
-            .to_string();
+                let mut project = TestProject::new(name, path.clone());
 
-        let mut project = TestProject::new(name, path.clone());
+                // Run dotnet test --list-tests to discover tests
+                if let Ok(tests) = list_tests(&path) {
+                    project.classes = group_tests_by_class(tests);
+                }
 
-        // Run dotnet test --list-tests to discover tests
-        if let Ok(tests) = list_tests(&path) {
-            project.classes = group_tests_by_class(tests);
+                project
+            })
+        })
+        .collect();
+
+    // Collect results from all threads
+    let mut projects = Vec::with_capacity(handles.len());
+    for handle in handles {
+        if let Ok(project) = handle.join() {
+            projects.push(project);
         }
-
-        projects.push(project);
     }
 
     Ok(projects)
