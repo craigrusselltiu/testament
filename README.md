@@ -8,6 +8,8 @@
 
 It treats test results as evidence; passing tests stand as a testament to correctness, and failing tests guide the work ahead.
 
+<img width="2556" height="1387" alt="image" src="https://github.com/user-attachments/assets/47cc3000-4ce9-46cb-95b5-7222c1943192" />
+
 ## Overview
 
 Testament is a terminal UI application for discovering, running, and monitoring .NET tests. It wraps `dotnet test` with an interactive interface featuring:
@@ -20,8 +22,6 @@ Testament is a terminal UI application for discovering, running, and monitoring 
 - **PR test runner** to run only tests changed in a GitHub pull request
 
 Testament solves the problem of managing test execution in large .NET solutions by providing a focused, distraction-free interface that lets you quickly navigate between projects, select specific tests, and view detailed results without leaving the terminal.
-
-<img width="2556" height="1385" alt="image" src="https://github.com/user-attachments/assets/9981bd16-dece-4537-8534-ae62c685009c" />
 
 ## Built With
 
