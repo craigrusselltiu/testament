@@ -49,15 +49,6 @@ pub fn parse_test_content(content: &str) -> Result<Vec<TestMethodInfo>, String> 
     Ok(methods)
 }
 
-/// Test attribute names that indicate a test method
-const TEST_ATTRIBUTES: &[&str] = &[
-    "Fact",           // xUnit
-    "Theory",         // xUnit
-    "Test",           // NUnit, MSTest
-    "TestMethod",     // MSTest
-    "TestCase",       // NUnit
-];
-
 fn find_test_methods(
     node: &Node,
     source: &[u8],
@@ -105,14 +96,13 @@ fn find_test_methods(
             }
         }
         "method_declaration" => {
-            if is_test_method(node, source) {
-                if let Some(name) = get_method_name(node, source) {
-                    methods.push(TestMethodInfo {
-                        method_name: name,
-                        class_name: current_class.to_string(),
-                        namespace: current_namespace.to_string(),
-                    });
-                }
+            // Collect ALL methods - dotnet test --list-tests will tell us which are tests
+            if let Some(name) = get_method_name(node, source) {
+                methods.push(TestMethodInfo {
+                    method_name: name,
+                    class_name: current_class.to_string(),
+                    namespace: current_namespace.to_string(),
+                });
             }
         }
         _ => {
@@ -156,45 +146,6 @@ fn get_method_name(node: &Node, source: &[u8]) -> Option<String> {
         }
     }
     None
-}
-
-fn is_test_method(node: &Node, source: &[u8]) -> bool {
-    // Look for attribute_list children
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            if child.kind() == "attribute_list" {
-                if has_test_attribute(&child, source) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn has_test_attribute(attr_list: &Node, source: &[u8]) -> bool {
-    for i in 0..attr_list.child_count() {
-        if let Some(child) = attr_list.child(i) {
-            if child.kind() == "attribute" {
-                let attr_text = get_attribute_name(&child, source);
-                if TEST_ATTRIBUTES.contains(&attr_text.as_str()) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn get_attribute_name(attr: &Node, source: &[u8]) -> String {
-    for i in 0..attr.child_count() {
-        if let Some(child) = attr.child(i) {
-            if child.kind() == "identifier" || child.kind() == "qualified_name" {
-                return node_text(&child, source);
-            }
-        }
-    }
-    String::new()
 }
 
 fn node_text(node: &Node, source: &[u8]) -> String {
@@ -361,7 +312,8 @@ public class MyTestClass
     }
 
     #[test]
-    fn test_non_test_methods_ignored() {
+    fn test_all_methods_collected() {
+        // We collect ALL methods - dotnet test --list-tests tells us which are tests
         let content = r#"
 namespace MyTests
 {
@@ -383,7 +335,11 @@ namespace MyTests
 }
 "#;
         let methods = parse_test_content(content).unwrap();
-        assert_eq!(methods.len(), 1);
-        assert_eq!(methods[0].method_name, "TestMethod");
+        // All 3 methods are collected
+        assert_eq!(methods.len(), 3);
+        let names: Vec<_> = methods.iter().map(|m| m.method_name.as_str()).collect();
+        assert!(names.contains(&"TestMethod"));
+        assert!(names.contains(&"HelperMethod"));
+        assert!(names.contains(&"SetUp"));
     }
 }
