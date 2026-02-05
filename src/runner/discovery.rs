@@ -89,7 +89,13 @@ pub fn parse_solution(sln_path: &Path) -> Result<Vec<PathBuf>> {
 
             // Only include test projects
             if is_test_project_name(name) && rel_path.ends_with(".csproj") {
-                let full_path = sln_dir.join(rel_path.replace('\\', "/"));
+                // Normalize path separators to the platform's native separator
+                let normalized_path = if cfg!(windows) {
+                    rel_path.replace('/', "\\")
+                } else {
+                    rel_path.replace('\\', "/")
+                };
+                let full_path = sln_dir.join(normalized_path);
                 if full_path.exists() {
                     projects.push(full_path);
                 }
