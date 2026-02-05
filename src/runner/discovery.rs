@@ -141,10 +141,12 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
                     // Build map of method names to full qualified names from C# source
                     let name_map = build_test_name_map(project_dir);
 
-                    if let Ok(test_names) = list_tests(&path) {
-                        let classes = group_tests_by_class(test_names, &name_map);
-                        let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
-                    }
+                    // Try to list tests, send empty if it fails (e.g., build error)
+                    let classes = match list_tests(&path) {
+                        Ok(test_names) => group_tests_by_class(test_names, &name_map),
+                        Err(_) => Vec::new(),
+                    };
+                    let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
                 })
             })
             .collect();

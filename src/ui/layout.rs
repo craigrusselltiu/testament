@@ -163,7 +163,13 @@ impl AppState {
                 line.len().div_ceil(content_width) as u16
             }
         }).sum();
-        self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
+        
+        // Only scroll if content exceeds visible area
+        if wrapped_lines > self.output_visible_lines {
+            self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
+        } else {
+            self.output_scroll = 0;
+        }
     }
 
     #[cfg(test)]
@@ -234,10 +240,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     );
     frame.render_stateful_widget(test_list, chunks[1], &mut state.test_state);
 
-    // Right side: Split into Output (top 40%) and Test Result (bottom 60%)
+    // Right side: Split into Output (top 50%) and Test Result (bottom 50%)
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[2]);
 
     // Right top: Output pane
