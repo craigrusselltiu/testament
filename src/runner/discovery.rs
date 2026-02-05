@@ -232,14 +232,18 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         
-        // Build error message with available information
-        let error_detail = if !stderr.is_empty() {
-            stderr.to_string()
-        } else if !stdout.is_empty() {
-            // Sometimes build errors go to stdout
-            stdout.to_string()
-        } else {
+        // Include both stdout and stderr - errors can appear in either
+        let mut error_parts = Vec::new();
+        if !stdout.is_empty() {
+            error_parts.push(stdout.to_string());
+        }
+        if !stderr.is_empty() {
+            error_parts.push(stderr.to_string());
+        }
+        let error_detail = if error_parts.is_empty() {
             format!("Exit code: {:?}", output.status.code())
+        } else {
+            error_parts.join("\n")
         };
         
         return Err(TestamentError::DotnetExecution(error_detail));
