@@ -74,17 +74,22 @@ impl StatefulWidget for TestList<'_> {
             }
 
             // Class header with collapse indicator
-            let collapse_indicator = if is_collapsed { "+" } else { "-" };
+            let collapse_indicator = if is_collapsed { ">" } else { "v" };
+            let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name)).count();
             let class_line = Line::from(vec![
                 Span::styled(
                     format!("{} ", collapse_indicator),
-                    Style::default().fg(self.theme.fg),
+                    Style::default().fg(self.theme.highlight),
                 ),
                 Span::styled(
                     class_full_name,
                     Style::default()
-                        .fg(self.theme.fg)
+                        .fg(self.theme.highlight)
                         .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" ({})", test_count),
+                    Style::default().fg(self.theme.border),
                 ),
             ]);
             items.push(ListItem::new(class_line));
@@ -102,7 +107,7 @@ impl StatefulWidget for TestList<'_> {
 
                     let test_line = Line::from(vec![
                         Span::styled(
-                            format!("  {} ", select_marker),
+                            format!("    {} ", select_marker),
                             if is_selected {
                                 Style::default().fg(self.theme.highlight)
                             } else {

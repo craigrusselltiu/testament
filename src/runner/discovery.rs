@@ -4,6 +4,7 @@ use std::sync::mpsc;
 
 use crate::error::{Result, TestamentError};
 use crate::model::{Test, TestClass, TestProject};
+use crate::parser::build_test_name_map;
 
 /// Events sent during background test discovery
 pub enum DiscoveryEvent {
@@ -134,8 +135,14 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
             .map(|(idx, path)| {
                 let tx = tx.clone();
                 std::thread::spawn(move || {
-                    if let Ok(tests) = list_tests(&path) {
-                        let classes = group_tests_by_class(tests);
+                    // Get project directory for C# parsing
+                    let project_dir = path.parent().unwrap_or(Path::new("."));
+
+                    // Build map of method names to full qualified names from C# source
+                    let name_map = build_test_name_map(project_dir);
+
+                    if let Ok(test_names) = list_tests(&path) {
+                        let classes = group_tests_by_class(test_names, &name_map);
                         let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
                     }
                 })
@@ -184,26 +191,32 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
     Ok(tests)
 }
 
-/// Group test names by their class.
-fn group_tests_by_class(test_names: Vec<String>) -> Vec<TestClass> {
+/// Group test names by their class using C# source parsing info.
+fn group_tests_by_class(
+    test_names: Vec<String>,
+    name_map: &std::collections::HashMap<String, crate::parser::TestMethodInfo>,
+) -> Vec<TestClass> {
     use std::collections::HashMap;
 
     let mut classes: HashMap<String, Vec<Test>> = HashMap::new();
 
-    for full_name in test_names {
-        // Parse "Namespace.ClassName.MethodName" format
-        let parts: Vec<&str> = full_name.rsplitn(2, '.').collect();
-        let (method_name, class_full_name) = if parts.len() == 2 {
-            (parts[0], parts[1])
+    for method_name in test_names {
+        // Look up the method in our parsed C# info
+        let (full_name, class_full_name) = if let Some(info) = name_map.get(&method_name) {
+            let full = info.full_name();
+            let class_full = if info.namespace.is_empty() {
+                info.class_name.clone()
+            } else {
+                format!("{}.{}", info.namespace, info.class_name)
+            };
+            (full, class_full)
         } else {
-            (full_name.as_str(), "")
+            // Fallback: no class info available, use method name directly
+            (method_name.clone(), String::new())
         };
 
-        let test = Test::new(method_name.to_string(), full_name.clone());
-        classes
-            .entry(class_full_name.to_string())
-            .or_default()
-            .push(test);
+        let test = Test::new(method_name, full_name);
+        classes.entry(class_full_name).or_default().push(test);
     }
 
     classes
@@ -279,16 +292,34 @@ mod tests {
     }
 
     // group_tests_by_class tests
+    use crate::parser::TestMethodInfo;
+    use std::collections::HashMap;
+
+    fn make_test_info(method: &str, class: &str, namespace: &str) -> TestMethodInfo {
+        TestMethodInfo {
+            method_name: method.to_string(),
+            class_name: class.to_string(),
+            namespace: namespace.to_string(),
+        }
+    }
+
     #[test]
     fn test_group_tests_empty_list() {
-        let result = group_tests_by_class(vec![]);
+        let map = HashMap::new();
+        let result = group_tests_by_class(vec![], &map);
         assert!(result.is_empty());
     }
 
     #[test]
-    fn test_group_tests_single_test() {
-        let tests = vec!["MyNamespace.MyClass.TestMethod".to_string()];
-        let result = group_tests_by_class(tests);
+    fn test_group_tests_single_test_with_map() {
+        let mut map = HashMap::new();
+        map.insert(
+            "TestMethod".to_string(),
+            make_test_info("TestMethod", "MyClass", "MyNamespace"),
+        );
+
+        let tests = vec!["TestMethod".to_string()];
+        let result = group_tests_by_class(tests, &map);
 
         assert_eq!(result.len(), 1);
         let class = &result[0];
@@ -300,29 +331,31 @@ mod tests {
     }
 
     #[test]
-    fn test_group_tests_multiple_tests_same_class() {
-        let tests = vec![
-            "NS.Class.Test1".to_string(),
-            "NS.Class.Test2".to_string(),
-            "NS.Class.Test3".to_string(),
-        ];
-        let result = group_tests_by_class(tests);
+    fn test_group_tests_multiple_tests_same_class_with_map() {
+        let mut map = HashMap::new();
+        map.insert("Test1".to_string(), make_test_info("Test1", "MyClass", "NS"));
+        map.insert("Test2".to_string(), make_test_info("Test2", "MyClass", "NS"));
+        map.insert("Test3".to_string(), make_test_info("Test3", "MyClass", "NS"));
+
+        let tests = vec!["Test1".to_string(), "Test2".to_string(), "Test3".to_string()];
+        let result = group_tests_by_class(tests, &map);
 
         assert_eq!(result.len(), 1);
         let class = &result[0];
-        assert_eq!(class.name, "Class");
+        assert_eq!(class.name, "MyClass");
         assert_eq!(class.namespace, "NS");
         assert_eq!(class.tests.len(), 3);
     }
 
     #[test]
-    fn test_group_tests_multiple_classes() {
-        let tests = vec![
-            "NS.ClassA.Test1".to_string(),
-            "NS.ClassB.Test1".to_string(),
-            "NS.ClassA.Test2".to_string(),
-        ];
-        let result = group_tests_by_class(tests);
+    fn test_group_tests_multiple_classes_with_map() {
+        let mut map = HashMap::new();
+        map.insert("Test1".to_string(), make_test_info("Test1", "ClassA", "NS"));
+        map.insert("Test2".to_string(), make_test_info("Test2", "ClassB", "NS"));
+        map.insert("Test3".to_string(), make_test_info("Test3", "ClassA", "NS"));
+
+        let tests = vec!["Test1".to_string(), "Test2".to_string(), "Test3".to_string()];
+        let result = group_tests_by_class(tests, &map);
 
         assert_eq!(result.len(), 2);
 
@@ -334,34 +367,15 @@ mod tests {
     }
 
     #[test]
-    fn test_group_tests_nested_namespace() {
-        let tests = vec!["Company.Product.Feature.Tests.MyClass.TestMethod".to_string()];
-        let result = group_tests_by_class(tests);
+    fn test_group_tests_fallback_when_not_in_map() {
+        let map = HashMap::new(); // Empty map
 
-        assert_eq!(result.len(), 1);
-        let class = &result[0];
-        assert_eq!(class.name, "MyClass");
-        assert_eq!(class.namespace, "Company.Product.Feature.Tests");
-    }
-
-    #[test]
-    fn test_group_tests_no_namespace() {
-        let tests = vec!["MyClass.TestMethod".to_string()];
-        let result = group_tests_by_class(tests);
-
-        assert_eq!(result.len(), 1);
-        let class = &result[0];
-        assert_eq!(class.name, "MyClass");
-        assert_eq!(class.namespace, "");
-    }
-
-    #[test]
-    fn test_group_tests_only_method_name() {
         let tests = vec!["TestMethod".to_string()];
-        let result = group_tests_by_class(tests);
+        let result = group_tests_by_class(tests, &map);
 
         assert_eq!(result.len(), 1);
         let class = &result[0];
+        // Fallback: no class info, method goes into unnamed class
         assert_eq!(class.name, "");
         assert_eq!(class.namespace, "");
         assert_eq!(class.tests.len(), 1);
@@ -369,12 +383,23 @@ mod tests {
     }
 
     #[test]
-    fn test_group_tests_preserves_full_name() {
-        let full_name = "Very.Long.Namespace.Path.ClassName.MethodName".to_string();
-        let tests = vec![full_name.clone()];
-        let result = group_tests_by_class(tests);
+    fn test_group_tests_mixed_found_and_not_found() {
+        let mut map = HashMap::new();
+        map.insert("Test1".to_string(), make_test_info("Test1", "MyClass", "NS"));
 
-        assert_eq!(result[0].tests[0].full_name, full_name);
+        let tests = vec!["Test1".to_string(), "UnknownTest".to_string()];
+        let result = group_tests_by_class(tests, &map);
+
+        // Test1 goes to NS.MyClass, UnknownTest goes to unnamed class
+        assert_eq!(result.len(), 2);
+
+        let known_class = result.iter().find(|c| c.name == "MyClass").unwrap();
+        assert_eq!(known_class.tests.len(), 1);
+        assert_eq!(known_class.tests[0].name, "Test1");
+
+        let unknown_class = result.iter().find(|c| c.name.is_empty()).unwrap();
+        assert_eq!(unknown_class.tests.len(), 1);
+        assert_eq!(unknown_class.tests[0].name, "UnknownTest");
     }
 
     // find_solution tests

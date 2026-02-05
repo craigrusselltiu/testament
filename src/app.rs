@@ -30,6 +30,7 @@ pub fn run(
     let mut state = AppState::new(projects);
     state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
     state.discovering = true;
+    state.status = "Discovering...".to_string();
 
     let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
@@ -49,6 +50,7 @@ pub fn run(
                     }
                     DiscoveryEvent::Complete => {
                         state.discovering = false;
+                        state.status = "Ready".to_string();
                         state.append_output(&format!("\n{}", random_ready_phrase()));
                     }
                 }
@@ -76,9 +78,8 @@ pub fn run(
                             if let Some((completed, _)) = &mut state.test_progress {
                                 *completed += 1;
                             }
-                        } else {
-                            state.append_output(&format!("\n{}", line));
                         }
+                        // Ignore other dotnet output lines
                     }
                     ExecutorEvent::BuildCompleted(success) => {
                         if success {

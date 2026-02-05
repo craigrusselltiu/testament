@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Instant startup with lazy test discovery** - TUI now launches immediately showing project names, while tests are discovered in the background. Projects show "(...)" while discovering, then update to show test count when ready. Startup phrase displays during discovery, ready phrase appears when complete.
 - Parallel test discovery - `dotnet test --list-tests` runs concurrently for all test projects
 
+### Added
+- **Test class grouping via C# source parsing** - Tests are now properly grouped by their containing class using tree-sitter to parse C# source files. This enables collapsible class groups in the Tests pane (press Space to toggle). Previously, tests appeared as a flat list because `dotnet test --list-tests` only outputs method names without class information.
+
 ## v0.3.3 - 2026-01-31
 
 ### Fixed
