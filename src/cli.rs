@@ -22,6 +22,20 @@ pub enum Command {
         #[arg(short, long)]
         filter: Option<String>,
     },
+    /// Run tests changed in a GitHub pull request
+    Pr {
+        /// GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)
+        #[arg(value_name = "URL")]
+        url: String,
+
+        /// Path to solution file, project file, or directory containing one
+        #[arg(short, long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Run tests directly without launching the TUI
+        #[arg(long)]
+        no_tui: bool,
+    },
 }
 
 impl Cli {

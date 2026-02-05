@@ -39,7 +39,7 @@ impl Widget for OutputPane<'_> {
             let width = 20;
             let filled = if total > 0 { (completed * width) / total } else { 0 };
             let bar = format!(
-                "\n[{}{}] {}/{}",
+                " [{}{}] {}/{}",
                 "\u{2588}".repeat(filled),
                 "\u{2591}".repeat(width - filled),
                 completed,

@@ -1,4 +1,4 @@
-mod csharp;
+pub mod csharp;
 mod trx;
 
 pub use csharp::{build_test_name_map, TestMethodInfo};

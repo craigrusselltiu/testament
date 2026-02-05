@@ -18,6 +18,7 @@ pub struct TestList<'a> {
     collapsed: &'a HashSet<String>,
     selected: &'a HashSet<String>,
     filter: &'a str,
+    project_name: &'a str,
 }
 
 impl<'a> TestList<'a> {
@@ -28,6 +29,7 @@ impl<'a> TestList<'a> {
         collapsed: &'a HashSet<String>,
         selected: &'a HashSet<String>,
         filter: &'a str,
+        project_name: &'a str,
     ) -> Self {
         Self {
             classes,
@@ -36,6 +38,7 @@ impl<'a> TestList<'a> {
             collapsed,
             selected,
             filter,
+            project_name,
         }
     }
 
@@ -107,9 +110,14 @@ impl StatefulWidget for TestList<'_> {
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mut items: Vec<ListItem> = Vec::new();
 
-        for class in self.classes {
+        // Sort classes alphabetically by full name
+        let mut sorted_classes: Vec<_> = self.classes.iter().collect();
+        sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+
+        for class in sorted_classes {
             let class_full_name = class.full_name();
-            let is_collapsed = self.collapsed.contains(&class_full_name);
+            let collapse_key = format!("{}::{}", self.project_name, class_full_name);
+            let is_collapsed = self.collapsed.contains(&collapse_key);
 
             // Check if any tests in this class match the filter
             let has_matching_tests = class.tests.iter().any(|t| self.matches_filter(&t.name));
@@ -150,13 +158,14 @@ impl StatefulWidget for TestList<'_> {
             ]);
             items.push(ListItem::new(class_line));
 
-            // Tests under this class (if not collapsed)
+            // Tests under this class (if not collapsed), sorted alphabetically
             if !is_collapsed {
-                for test in &class.tests {
-                    if !self.matches_filter(&test.name) {
-                        continue;
-                    }
+                let mut sorted_tests: Vec<_> = class.tests.iter()
+                    .filter(|t| self.matches_filter(&t.name))
+                    .collect();
+                sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+                for test in sorted_tests {
                     let (symbol, style) = self.status_symbol(&test.status);
                     let is_selected = self.selected.contains(&test.full_name);
                     let select_marker = if is_selected { "[x]" } else { "[ ]" };
@@ -217,17 +226,25 @@ pub enum TestListItem {
 }
 
 /// Build a flattened list of items for navigation purposes
+/// Classes and tests are sorted alphabetically
+/// The `project_name` is used to create unique collapse keys per project
 pub fn build_test_items(
     classes: &[TestClass],
     collapsed: &HashSet<String>,
     filter: &str,
+    project_name: &str,
 ) -> Vec<TestListItem> {
     let mut items = Vec::new();
     let filter_lower = filter.to_lowercase();
 
-    for class in classes {
+    // Sort classes alphabetically by full name
+    let mut sorted_classes: Vec<_> = classes.iter().collect();
+    sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+
+    for class in sorted_classes {
         let class_full_name = class.full_name();
-        let is_collapsed = collapsed.contains(&class_full_name);
+        let collapse_key = format!("{}::{}", project_name, class_full_name);
+        let is_collapsed = collapsed.contains(&collapse_key);
 
         let has_matching_tests = class.tests.iter().any(|t| {
             filter.is_empty() || t.name.to_lowercase().contains(&filter_lower)
@@ -240,10 +257,14 @@ pub fn build_test_items(
         items.push(TestListItem::Class(class_full_name.clone()));
 
         if !is_collapsed {
-            for test in &class.tests {
-                if filter.is_empty() || test.name.to_lowercase().contains(&filter_lower) {
-                    items.push(TestListItem::Test(test.full_name.clone()));
-                }
+            // Sort tests alphabetically within the class
+            let mut sorted_tests: Vec<_> = class.tests.iter()
+                .filter(|t| filter.is_empty() || t.name.to_lowercase().contains(&filter_lower))
+                .collect();
+            sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+            for test in sorted_tests {
+                items.push(TestListItem::Test(test.full_name.clone()));
             }
         }
     }
@@ -300,7 +321,7 @@ mod tests {
     #[test]
     fn test_build_test_items_empty_classes() {
         let collapsed = HashSet::new();
-        let items = build_test_items(&[], &collapsed, "");
+        let items = build_test_items(&[], &collapsed, "", "TestProject");
         assert!(items.is_empty());
     }
 
@@ -310,7 +331,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         assert_eq!(items.len(), 2);
         match &items[0] {
@@ -328,7 +349,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2", "Test3"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         assert_eq!(items.len(), 4); // 1 class + 3 tests
         match &items[0] {
@@ -351,7 +372,7 @@ mod tests {
         ];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         assert_eq!(items.len(), 5); // 2 classes + 3 tests total
     }
@@ -361,9 +382,9 @@ mod tests {
     fn test_build_test_items_collapsed_class() {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
         let mut collapsed = HashSet::new();
-        collapsed.insert("NS.MyClass".to_string());
+        collapsed.insert("TestProject::NS.MyClass".to_string());
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         assert_eq!(items.len(), 1); // Only the class header, no tests
         match &items[0] {
@@ -379,9 +400,9 @@ mod tests {
             create_test_class("ClassB", "NS", &["Test1", "Test2"]),
         ];
         let mut collapsed = HashSet::new();
-        collapsed.insert("NS.ClassA".to_string()); // Only ClassA is collapsed
+        collapsed.insert("TestProject::NS.ClassA".to_string()); // Only ClassA is collapsed
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         // ClassA (collapsed): 1 item
         // ClassB (expanded): 1 class + 2 tests = 3 items
@@ -394,7 +415,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
 
         assert_eq!(items.len(), 3); // 1 class + 2 tests
     }
@@ -404,7 +425,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Other2"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
 
         assert_eq!(items.len(), 2); // 1 class + 1 matching test
     }
@@ -414,7 +435,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "NonExistent");
+        let items = build_test_items(&classes, &collapsed, "NonExistent", "TestProject");
 
         assert!(items.is_empty()); // Class is excluded because no tests match
     }
@@ -425,13 +446,13 @@ mod tests {
         let collapsed = HashSet::new();
 
         // Filter with different case
-        let items = build_test_items(&classes, &collapsed, "testmethod");
+        let items = build_test_items(&classes, &collapsed, "testmethod", "TestProject");
         assert_eq!(items.len(), 2);
 
-        let items = build_test_items(&classes, &collapsed, "TESTMETHOD");
+        let items = build_test_items(&classes, &collapsed, "TESTMETHOD", "TestProject");
         assert_eq!(items.len(), 2);
 
-        let items = build_test_items(&classes, &collapsed, "TeSt");
+        let items = build_test_items(&classes, &collapsed, "TeSt", "TestProject");
         assert_eq!(items.len(), 2);
     }
 
@@ -440,10 +461,10 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["TestCalculation", "TestValidation"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "Calc");
+        let items = build_test_items(&classes, &collapsed, "Calc", "TestProject");
         assert_eq!(items.len(), 2); // 1 class + 1 test (only TestCalculation matches)
 
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
         assert_eq!(items.len(), 3); // 1 class + 2 tests (both match)
     }
 
@@ -451,10 +472,10 @@ mod tests {
     fn test_build_test_items_filter_with_collapsed_class() {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1", "Test2"])];
         let mut collapsed = HashSet::new();
-        collapsed.insert("NS.MyClass".to_string());
+        collapsed.insert("TestProject::NS.MyClass".to_string());
 
         // Even with filter, collapsed class shows only header
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
         assert_eq!(items.len(), 1);
     }
 
@@ -466,7 +487,7 @@ mod tests {
         ];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
 
         // ClassA has no matching tests, so it should be excluded
         assert_eq!(items.len(), 2); // Only ClassB and its test
@@ -482,7 +503,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "NS", &["Test1"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         assert_eq!(items.len(), 2);
     }
@@ -492,7 +513,7 @@ mod tests {
         let classes = vec![TestClass::new("EmptyClass".to_string(), "NS".to_string())];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         // Class with no tests should still show up when no filter
         assert_eq!(items.len(), 1);
@@ -503,7 +524,7 @@ mod tests {
         let classes = vec![TestClass::new("EmptyClass".to_string(), "NS".to_string())];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "Test");
+        let items = build_test_items(&classes, &collapsed, "Test", "TestProject");
 
         // Class with no tests should be excluded when filter is active
         assert!(items.is_empty());
@@ -514,7 +535,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "Deep.Nested.NS", &["TestMethod"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         match &items[1] {
             TestListItem::Test(name) => {
@@ -529,7 +550,7 @@ mod tests {
         let classes = vec![create_test_class("MyClass", "", &["Test1"])];
         let collapsed = HashSet::new();
 
-        let items = build_test_items(&classes, &collapsed, "");
+        let items = build_test_items(&classes, &collapsed, "", "TestProject");
 
         match &items[0] {
             TestListItem::Class(name) => assert_eq!(name, "MyClass"),

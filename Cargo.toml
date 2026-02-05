@@ -1,6 +1,6 @@
 [package]
 name = "testament"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "A TUI for discovering, running, and monitoring .NET tests"
 license = "MIT"
@@ -15,6 +15,8 @@ thiserror = "2"
 notify = "7"
 tree-sitter = "0.24"
 tree-sitter-c-sharp = "0.23"
+reqwest = { version = "0.12", features = ["blocking"] }
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

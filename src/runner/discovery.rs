@@ -113,6 +113,13 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
         parse_solution(path)?
     };
 
+    discover_projects_from_paths(project_paths)
+}
+
+/// Discover test projects from explicit csproj paths.
+/// Used by PR mode to only load projects containing changed tests.
+pub fn discover_projects_from_paths(project_paths: Vec<PathBuf>) -> Result<(Vec<TestProject>, mpsc::Receiver<DiscoveryEvent>)> {
+
     // Create projects without tests (instant)
     let projects: Vec<TestProject> = project_paths
         .iter()

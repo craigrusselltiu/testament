@@ -106,6 +106,7 @@ pub struct AppState {
     pub output_visible_lines: u16,
     pub output_width: u16,
     pub output_auto_scroll: bool,
+    pub needs_initial_scroll: bool,
     pub test_result_scroll: u16,
     pub theme: Theme,
     pub active_pane: Pane,
@@ -118,6 +119,7 @@ pub struct AppState {
     pub test_progress: Option<(usize, usize)>,
     pub discovering: bool,
     pub status: String,
+    pub context: Option<String>,
 }
 
 impl AppState {
@@ -135,6 +137,7 @@ impl AppState {
             output_visible_lines: 0,  // Set during first draw
             output_width: 80,
             output_auto_scroll: false,  // Enabled when tests/builds start
+            needs_initial_scroll: true, // Scroll on first draw with dimensions
             test_result_scroll: 0,
             theme: Theme::default(),
             active_pane: Pane::Projects,
@@ -147,6 +150,7 @@ impl AppState {
             test_progress: None,
             discovering: false,
             status: "Ready".to_string(),
+            context: None,
         }
     }
 
@@ -159,33 +163,28 @@ impl AppState {
 
     pub fn scroll_output_to_bottom(&mut self) {
         // Don't auto-scroll until we have real dimensions from first draw
-        // (output_visible_lines defaults to 0, gets set during draw)
         if self.output_visible_lines == 0 {
             return;
         }
-        
-        // Account for line wrapping by calculating actual rendered lines
-        // Use inner width (subtract 2 for borders)
+
+        // Calculate total wrapped lines accounting for line wrapping
         let content_width = self.output_width.saturating_sub(2) as usize;
-        let wrapped_lines: u16 = self.output.lines().map(|line| {
+        let mut total_lines: u16 = self.output.lines().map(|line| {
             if content_width == 0 || line.is_empty() {
                 1
             } else {
-                // Use unicode width for accurate character counting
-                let line_width: usize = line.chars().map(|c| {
-                    if c.is_ascii() { 1 } else { 2 }  // Wide chars take 2 cells
-                }).sum();
-                line_width.div_ceil(content_width).max(1) as u16
+                let line_len = line.chars().count();
+                line_len.div_ceil(content_width).max(1) as u16
             }
         }).sum();
         
-        // Only scroll if content exceeds visible area (add small buffer to avoid early scrolling)
-        let threshold = self.output_visible_lines.saturating_add(2);
-        if wrapped_lines > threshold {
-            self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
-        } else {
-            self.output_scroll = 0;
+        // Account for trailing newline (adds an extra line)
+        if self.output.ends_with('\n') {
+            total_lines += 1;
         }
+
+        // Scroll so the last line is visible at the bottom
+        self.output_scroll = total_lines.saturating_sub(self.output_visible_lines);
     }
 
     #[cfg(test)]
@@ -195,11 +194,17 @@ impl AppState {
             .and_then(|i| self.projects.get(i))
     }
 
-    pub fn toggle_class_collapsed(&mut self, class_name: &str) {
-        if self.collapsed_classes.contains(class_name) {
-            self.collapsed_classes.remove(class_name);
+    /// Create a collapse key that's unique per project
+    pub fn collapse_key(project_name: &str, class_name: &str) -> String {
+        format!("{}::{}", project_name, class_name)
+    }
+
+    pub fn toggle_class_collapsed(&mut self, project_name: &str, class_name: &str) {
+        let key = Self::collapse_key(project_name, class_name);
+        if self.collapsed_classes.contains(&key) {
+            self.collapsed_classes.remove(&key);
         } else {
-            self.collapsed_classes.insert(class_name.to_string());
+            self.collapsed_classes.insert(key);
         }
     }
 
@@ -214,13 +219,49 @@ impl AppState {
     pub fn clear_selection(&mut self) {
         self.selected_tests.clear();
     }
+
+    /// Toggle between expanding all and collapsing all classes for the current project
+    pub fn toggle_expand_collapse_all(&mut self, project_name: &str, classes: &[crate::model::TestClass]) {
+        // Check if any classes are currently collapsed for this project
+        let any_collapsed = classes.iter().any(|class| {
+            let key = format!("{}::{}", project_name, class.full_name());
+            self.collapsed_classes.contains(&key)
+        });
+
+        if any_collapsed {
+            // Expand all: remove all collapse keys for this project
+            self.collapsed_classes.retain(|key| !key.starts_with(&format!("{}::", project_name)));
+        } else {
+            // Collapse all: add collapse keys for all classes in this project
+            for class in classes {
+                let key = format!("{}::{}", project_name, class.full_name());
+                self.collapsed_classes.insert(key);
+            }
+        }
+    }
 }
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
-    let main_chunks = Layout::default()
+    // Split into optional header, main content, and status bar
+    let has_context = state.context.is_some();
+    let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints(if has_context {
+            vec![Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]
+        } else {
+            vec![Constraint::Length(0), Constraint::Min(0), Constraint::Length(1)]
+        })
         .split(frame.area());
+
+    // Render context header if present
+    if let Some(ref context) = state.context {
+        let header = Paragraph::new(context.as_str())
+            .style(Style::default().fg(state.theme.highlight).add_modifier(Modifier::BOLD));
+        frame.render_widget(header, outer_chunks[0]);
+    }
+
+    let main_area = outer_chunks[1];
+    let status_area = outer_chunks[2];
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -229,7 +270,21 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             Constraint::Percentage(40),
             Constraint::Percentage(40),
         ])
-        .split(main_chunks[0]);
+        .split(main_area);
+
+    // Right side: Split into Output (top 50%) and Test Result (bottom 50%)
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(chunks[2]);
+
+    // Update output dimensions and perform initial scroll before any borrows
+    state.output_visible_lines = right_chunks[0].height.saturating_sub(2);
+    state.output_width = right_chunks[0].width;
+    if state.needs_initial_scroll && state.output_visible_lines > 0 {
+        state.scroll_output_to_bottom();
+        state.needs_initial_scroll = false;
+    }
 
     // Left pane: Projects
     let project_list = ProjectList::new(
@@ -242,10 +297,10 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 
     // Middle pane: Tests
     let selected_idx = state.project_state.selected();
-    let classes: &[_] = selected_idx
+    let (classes, project_name): (&[_], &str) = selected_idx
         .and_then(|i| state.projects.get(i))
-        .map(|p| p.classes.as_slice())
-        .unwrap_or(&[]);
+        .map(|p| (p.classes.as_slice(), p.name.as_str()))
+        .unwrap_or((&[], ""));
     let test_list = TestList::new(
         classes,
         &state.theme,
@@ -253,18 +308,11 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         &state.collapsed_classes,
         &state.selected_tests,
         &state.filter,
+        project_name,
     );
     frame.render_stateful_widget(test_list, chunks[1], &mut state.test_state);
 
-    // Right side: Split into Output (top 50%) and Test Result (bottom 50%)
-    let right_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(chunks[2]);
-
     // Right top: Output pane
-    state.output_visible_lines = right_chunks[0].height.saturating_sub(2);
-    state.output_width = right_chunks[0].width;
     let output_pane = OutputPane::new(
         &state.output,
         &state.theme,
@@ -275,20 +323,20 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     frame.render_widget(output_pane, right_chunks[0]);
 
     // Right bottom: Test Result pane
-    let selected_test = get_selected_test(state, classes);
+    let (selected_test, context_message) = get_selected_test_with_context(state, classes, project_name);
     let test_result_pane = TestResultPane::new(
         selected_test,
         &state.theme,
         state.active_pane == Pane::TestResult,
         state.test_result_scroll,
-    );
+    ).with_context(context_message);
     frame.render_widget(test_result_pane, right_chunks[1]);
 
     // Status bar - split into left (keybindings) and right (status)
     let status_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(state.status.len() as u16 + 2)])
-        .split(main_chunks[1]);
+        .split(status_area);
 
     let watch_indicator = if state.watch_mode { "[WATCH] " } else { "" };
     let left_status = if state.filter_active {
@@ -307,7 +355,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         if failed_count > 0 {
             parts.push("a:run-failed");
         }
-        parts.extend(["Space:toggle", "x:clear", "/:filter"]);
+        parts.extend(["Space:toggle", "c:expand/collapse", "C:clear-sel", "x:clear-out", "/:filter"]);
 
         let suffix = if selected_count > 0 {
             format!(" | {} selected", selected_count)
@@ -329,25 +377,63 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     frame.render_widget(right_bar, status_chunks[1]);
 }
 
-fn get_selected_test<'a>(state: &AppState, classes: &'a [TestClass]) -> Option<&'a Test> {
-    let selected_idx = state.test_state.selected()?;
-    let items = build_test_items(classes, &state.collapsed_classes, &state.filter);
-    let item = items.get(selected_idx)?;
-    
-    match item {
-        TestListItem::Test(full_name) => {
-            // Find the test in classes
-            for class in classes {
-                for test in &class.tests {
-                    if &test.full_name == full_name {
-                        return Some(test);
+fn get_selected_test_with_context<'a>(
+    state: &AppState, 
+    classes: &'a [TestClass], 
+    project_name: &str
+) -> (Option<&'a Test>, Option<String>) {
+    // If focused on Projects pane, show project info
+    if state.active_pane == Pane::Projects {
+        if let Some(idx) = state.project_state.selected() {
+            if let Some(project) = state.projects.get(idx) {
+                let test_count = project.test_count();
+                let message = format!("Tests found in project: {}", test_count);
+                return (None, Some(message));
+            }
+        }
+        return (None, None);
+    }
+
+    // If in Tests pane, check what's selected
+    if let Some(selected_idx) = state.test_state.selected() {
+        let items = build_test_items(classes, &state.collapsed_classes, &state.filter, project_name);
+        if let Some(item) = items.get(selected_idx) {
+            match item {
+                TestListItem::Test(full_name) => {
+                    // Find the test in classes
+                    for class in classes {
+                        for test in &class.tests {
+                            if &test.full_name == full_name {
+                                return (Some(test), None);
+                            }
+                        }
+                    }
+                }
+                TestListItem::Class(class_name) => {
+                    // Find test count for this class
+                    for class in classes {
+                        if &class.full_name() == class_name {
+                            let test_count = class.tests.len();
+                            let message = format!("Tests found in class: {}", test_count);
+                            return (None, Some(message));
+                        }
+                    }
+                    // Handle Uncategorized (empty class name)
+                    if class_name.is_empty() {
+                        for class in classes {
+                            if class.full_name().is_empty() {
+                                let test_count = class.tests.len();
+                                let message = format!("Tests found in class: {}", test_count);
+                                return (None, Some(message));
+                            }
+                        }
                     }
                 }
             }
-            None
         }
-        TestListItem::Class(_) => None,
     }
+    
+    (None, None)
 }
 
 #[cfg(test)]
@@ -472,45 +558,62 @@ mod tests {
     fn test_toggle_class_collapsed_add() {
         let mut state = AppState::new(vec![]);
 
-        state.toggle_class_collapsed("NS.MyClass");
-        assert!(state.collapsed_classes.contains("NS.MyClass"));
+        state.toggle_class_collapsed("TestProject", "NS.MyClass");
+        assert!(state.collapsed_classes.contains("TestProject::NS.MyClass"));
     }
 
     #[test]
     fn test_toggle_class_collapsed_remove() {
         let mut state = AppState::new(vec![]);
 
-        state.toggle_class_collapsed("NS.MyClass");
-        assert!(state.collapsed_classes.contains("NS.MyClass"));
+        state.toggle_class_collapsed("TestProject", "NS.MyClass");
+        assert!(state.collapsed_classes.contains("TestProject::NS.MyClass"));
 
-        state.toggle_class_collapsed("NS.MyClass");
-        assert!(!state.collapsed_classes.contains("NS.MyClass"));
+        state.toggle_class_collapsed("TestProject", "NS.MyClass");
+        assert!(!state.collapsed_classes.contains("TestProject::NS.MyClass"));
     }
 
     #[test]
     fn test_toggle_class_collapsed_multiple_classes() {
         let mut state = AppState::new(vec![]);
 
-        state.toggle_class_collapsed("Class1");
-        state.toggle_class_collapsed("Class2");
-        state.toggle_class_collapsed("Class3");
+        state.toggle_class_collapsed("TestProject", "Class1");
+        state.toggle_class_collapsed("TestProject", "Class2");
+        state.toggle_class_collapsed("TestProject", "Class3");
 
-        assert!(state.collapsed_classes.contains("Class1"));
-        assert!(state.collapsed_classes.contains("Class2"));
-        assert!(state.collapsed_classes.contains("Class3"));
+        assert!(state.collapsed_classes.contains("TestProject::Class1"));
+        assert!(state.collapsed_classes.contains("TestProject::Class2"));
+        assert!(state.collapsed_classes.contains("TestProject::Class3"));
 
-        state.toggle_class_collapsed("Class2");
-        assert!(state.collapsed_classes.contains("Class1"));
-        assert!(!state.collapsed_classes.contains("Class2"));
-        assert!(state.collapsed_classes.contains("Class3"));
+        state.toggle_class_collapsed("TestProject", "Class2");
+        assert!(state.collapsed_classes.contains("TestProject::Class1"));
+        assert!(!state.collapsed_classes.contains("TestProject::Class2"));
+        assert!(state.collapsed_classes.contains("TestProject::Class3"));
     }
 
     #[test]
     fn test_toggle_class_collapsed_empty_string() {
         let mut state = AppState::new(vec![]);
 
-        state.toggle_class_collapsed("");
-        assert!(state.collapsed_classes.contains(""));
+        state.toggle_class_collapsed("TestProject", "");
+        assert!(state.collapsed_classes.contains("TestProject::"));
+    }
+
+    #[test]
+    fn test_toggle_class_collapsed_different_projects() {
+        let mut state = AppState::new(vec![]);
+
+        // Collapse same class name in different projects
+        state.toggle_class_collapsed("ProjectA", "NS.MyClass");
+        state.toggle_class_collapsed("ProjectB", "NS.MyClass");
+
+        assert!(state.collapsed_classes.contains("ProjectA::NS.MyClass"));
+        assert!(state.collapsed_classes.contains("ProjectB::NS.MyClass"));
+
+        // Expand in ProjectA only
+        state.toggle_class_collapsed("ProjectA", "NS.MyClass");
+        assert!(!state.collapsed_classes.contains("ProjectA::NS.MyClass"));
+        assert!(state.collapsed_classes.contains("ProjectB::NS.MyClass"));
     }
 
     // toggle_test_selected tests
