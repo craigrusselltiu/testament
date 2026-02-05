@@ -1,8 +1,17 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
 
 use crate::error::{Result, TestamentError};
 use crate::model::{Test, TestClass, TestProject};
+
+/// Events sent during background test discovery
+pub enum DiscoveryEvent {
+    /// Tests discovered for a project (project index, test classes)
+    ProjectDiscovered(usize, Vec<TestClass>),
+    /// All discovery complete
+    Complete,
+}
 
 /// Find a .sln or .csproj file in the given path.
 ///
@@ -90,52 +99,57 @@ fn is_test_project_name(name: &str) -> bool {
     name.ends_with("Tests") || name.ends_with("Test") || name.ends_with(".Tests") || name.ends_with(".Test")
 }
 
-/// Discover test projects and their tests.
+/// Discover test projects lazily - returns projects immediately (without tests),
+/// then discovers tests in background and sends results via channel.
 ///
-/// If `path` is a .csproj file, treats it as the single project.
-/// If `path` is a .sln file, parses it to find test projects.
-/// Test discovery runs in parallel across all projects for faster startup.
-pub fn discover_projects(path: &Path) -> Result<Vec<TestProject>> {
+/// This allows the TUI to start instantly while test discovery happens in background.
+pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Receiver<DiscoveryEvent>)> {
     let project_paths = if path.extension().map_or(false, |ext| ext == "csproj") {
-        // Directly use the .csproj file
         vec![path.to_path_buf()]
     } else {
-        // Parse the .sln file
         parse_solution(path)?
     };
 
-    // Run test discovery in parallel using threads
-    let handles: Vec<_> = project_paths
-        .into_iter()
+    // Create projects without tests (instant)
+    let projects: Vec<TestProject> = project_paths
+        .iter()
         .map(|path| {
-            std::thread::spawn(move || {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown")
-                    .to_string();
-
-                let mut project = TestProject::new(name, path.clone());
-
-                // Run dotnet test --list-tests to discover tests
-                if let Ok(tests) = list_tests(&path) {
-                    project.classes = group_tests_by_class(tests);
-                }
-
-                project
-            })
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            TestProject::new(name, path.clone())
         })
         .collect();
 
-    // Collect results from all threads
-    let mut projects = Vec::with_capacity(handles.len());
-    for handle in handles {
-        if let Ok(project) = handle.join() {
-            projects.push(project);
-        }
-    }
+    let (tx, rx) = mpsc::channel();
 
-    Ok(projects)
+    // Spawn background discovery
+    let paths_with_indices: Vec<_> = project_paths.into_iter().enumerate().collect();
+    std::thread::spawn(move || {
+        // Discover tests in parallel
+        let handles: Vec<_> = paths_with_indices
+            .into_iter()
+            .map(|(idx, path)| {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    if let Ok(tests) = list_tests(&path) {
+                        let classes = group_tests_by_class(tests);
+                        let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all to complete
+        for handle in handles {
+            let _ = handle.join();
+        }
+        let _ = tx.send(DiscoveryEvent::Complete);
+    });
+
+    Ok((projects, rx))
 }
 
 /// Run `dotnet test --list-tests` to get test names.

@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crossterm::{
@@ -11,10 +12,14 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
-use crate::runner::{ExecutorEvent, FileWatcher, TestExecutor};
+use crate::runner::{DiscoveryEvent, ExecutorEvent, FileWatcher, TestExecutor};
 use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_ready_phrase}, Pane, TestListItem};
 
-pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> {
+pub fn run(
+    projects: Vec<TestProject>,
+    solution_dir: PathBuf,
+    discovery_rx: mpsc::Receiver<DiscoveryEvent>,
+) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -24,13 +29,30 @@ pub fn run(projects: Vec<TestProject>, solution_dir: PathBuf) -> io::Result<()> 
 
     let mut state = AppState::new(projects);
     state.output = format!("{}\n{}", startup_art(), random_ready_phrase());
+    state.discovering = true;
 
-    let mut executor_rx: Option<std::sync::mpsc::Receiver<ExecutorEvent>> = None;
+    let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
 
     // Main loop
     loop {
         terminal.draw(|f| ui::draw(f, &mut state))?;
+
+        // Check for discovery events (background test discovery)
+        if state.discovering {
+            while let Ok(event) = discovery_rx.try_recv() {
+                match event {
+                    DiscoveryEvent::ProjectDiscovered(idx, classes) => {
+                        if let Some(project) = state.projects.get_mut(idx) {
+                            project.classes = classes;
+                        }
+                    }
+                    DiscoveryEvent::Complete => {
+                        state.discovering = false;
+                    }
+                }
+            }
+        }
 
         // Check for file changes in watch mode
         if state.watch_mode {
