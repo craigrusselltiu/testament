@@ -30,7 +30,7 @@ Official release.
   - Fetches PR diff from GitHub API (supports GITHUB_TOKEN or `gh auth token`)
   - Extracts test methods from diff using pattern matching (supports xUnit, NUnit, MSTest)
   - Runs matching tests with `dotnet test --filter`
-  - `--tui` flag available (implementation pending)
+  - `--no-tui` flag to run tests directly without launching the TUI
 
 ### Changed
 - **Alphabetical sorting** - Tests panel now displays classes and tests sorted alphabetically (case-insensitive)
@@ -149,13 +149,11 @@ Official release.
 - Comprehensive unit test suite with 90% coverage
 - Core features (Phase 2):
   - Tab/Shift-Tab to switch between panes
-  - h/l to collapse/expand test classes
-  - Space to toggle test selection
+  - Space to toggle collapse (on class) or select (on test)
   - c to clear selection
   - / to filter tests by name
   - Focused pane highlighting
   - Watch mode (w key) with file system notifications
-  - .testament.toml configuration support
   - Re-run failed tests (a key)
 - Basic TUI with three-pane layout (projects, tests, output)
 - Test discovery from .sln files and csproj patterns
