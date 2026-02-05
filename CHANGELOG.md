@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.0.0 - 2026-02-05
+
+Official release.
+
+### Added
+- **Discovery caching** - Test discovery results are cached in temp directory, keyed by csproj modification time. Subsequent runs skip expensive `dotnet test --list-tests` when project unchanged.
+- **Context header** - TUI now displays "Running Tests for Solution: X.sln" or "Running Tests for PR #123" at the top
+- **PR mode improvements** - Now loads only changed projects and filters to only changed tests (not all tests in affected projects)
+
+### Changed
+- **Performance optimizations**:
+  - Line wrap calculations cached and invalidated only on output change
+  - Filter matching precomputes lowercase once per render instead of per test
+  - Vector pre-allocation in `build_test_items()` with capacity estimation
+- Progress bar now displays inline with "Running tests..." message
+- Test count messages simplified to "Tests found in class: N" format
+
 ## v0.5.0 - 2026-02-06
 
 ### Added
@@ -13,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fetches PR diff from GitHub API (supports GITHUB_TOKEN or `gh auth token`)
   - Extracts test methods from diff using pattern matching (supports xUnit, NUnit, MSTest)
   - Runs matching tests with `dotnet test --filter`
-  - `--tui` flag available (implementation pending)
+  - `--no-tui` flag to run tests directly without launching the TUI
 
 ### Changed
 - **Alphabetical sorting** - Tests panel now displays classes and tests sorted alphabetically (case-insensitive)
@@ -132,13 +149,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive unit test suite with 90% coverage
 - Core features (Phase 2):
   - Tab/Shift-Tab to switch between panes
-  - h/l to collapse/expand test classes
-  - Space to toggle test selection
+  - Space to toggle collapse (on class) or select (on test)
   - c to clear selection
   - / to filter tests by name
   - Focused pane highlighting
   - Watch mode (w key) with file system notifications
-  - .testament.toml configuration support
   - Re-run failed tests (a key)
 - Basic TUI with three-pane layout (projects, tests, output)
 - Test discovery from .sln files and csproj patterns

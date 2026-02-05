@@ -120,6 +120,8 @@ pub struct AppState {
     pub discovering: bool,
     pub status: String,
     pub context: Option<String>,
+    // Cached values for performance
+    cached_output_lines: Option<(u16, usize)>, // (total_lines, output_len) - invalidated when output changes
 }
 
 impl AppState {
@@ -151,24 +153,37 @@ impl AppState {
             discovering: false,
             status: "Ready".to_string(),
             context: None,
+            cached_output_lines: None,
         }
     }
 
     pub fn append_output(&mut self, text: &str) {
         self.output.push_str(text);
+        self.cached_output_lines = None; // Invalidate cache
         if self.output_auto_scroll {
             self.scroll_output_to_bottom();
         }
     }
+    
+    pub fn clear_output(&mut self) {
+        self.output.clear();
+        self.output_scroll = 0;
+        self.cached_output_lines = None; // Invalidate cache
+    }
 
-    pub fn scroll_output_to_bottom(&mut self) {
-        // Don't auto-scroll until we have real dimensions from first draw
-        if self.output_visible_lines == 0 {
-            return;
-        }
-
-        // Calculate total wrapped lines accounting for line wrapping
+    /// Get total wrapped line count, using cache if valid
+    fn get_total_output_lines(&mut self) -> u16 {
+        let output_len = self.output.len();
         let content_width = self.output_width.saturating_sub(2) as usize;
+        
+        // Check if cache is valid (same output length and width)
+        if let Some((cached_lines, cached_len)) = self.cached_output_lines {
+            if cached_len == output_len {
+                return cached_lines;
+            }
+        }
+        
+        // Calculate total wrapped lines
         let mut total_lines: u16 = self.output.lines().map(|line| {
             if content_width == 0 || line.is_empty() {
                 1
@@ -178,12 +193,23 @@ impl AppState {
             }
         }).sum();
         
-        // Account for trailing newline (adds an extra line)
+        // Account for trailing newline
         if self.output.ends_with('\n') {
             total_lines += 1;
         }
+        
+        // Cache the result
+        self.cached_output_lines = Some((total_lines, output_len));
+        total_lines
+    }
 
-        // Scroll so the last line is visible at the bottom
+    pub fn scroll_output_to_bottom(&mut self) {
+        // Don't auto-scroll until we have real dimensions from first draw
+        if self.output_visible_lines == 0 {
+            return;
+        }
+
+        let total_lines = self.get_total_output_lines();
         self.output_scroll = total_lines.saturating_sub(self.output_visible_lines);
     }
 

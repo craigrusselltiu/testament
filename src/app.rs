@@ -270,8 +270,7 @@ pub fn run_with_preselected(
                         }
                     }
                     KeyCode::Char('x') => {
-                        state.output.clear();
-                        state.output_scroll = 0;
+                        state.clear_output();
                         state.test_progress = None;
                     }
                     KeyCode::Char('c') => {

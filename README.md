@@ -1,6 +1,6 @@
 # Testament
 
-![Version](https://img.shields.io/badge/version-0.5.0-green)
+![Version](https://img.shields.io/badge/version-1.0.0-green)
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -16,7 +16,7 @@ Testament is a terminal UI application for discovering, running, and monitoring 
 - **Real-time output streaming** during test execution
 - **Test class grouping** via C# source parsing with collapsible groups
 - **Watch mode** for automatic test re-runs on file changes
-- **Lazy test discovery** for instant startup
+- **Lazy test discovery** for instant startup with discovery caching
 - **PR test runner** to run only tests changed in a GitHub pull request
 
 Testament solves the problem of managing test execution in large .NET solutions by providing a focused, distraction-free interface that lets you quickly navigate between projects, select specific tests, and view detailed results without leaving the terminal.
@@ -90,7 +90,7 @@ testament
 ```
 
 Testament will automatically:
-1. Search upward from the current directory for a `.sln` file
+1. Search the current directory for a `.sln` file (or `.csproj` if no solution found)
 2. Parse the solution to find test projects (projects ending in `Tests` or `Test`)
 3. Run `dotnet test --list-tests` to discover individual tests
 4. Display projects and tests in the TUI
@@ -154,30 +154,20 @@ Press `w` to enable watch mode. Testament will monitor `.cs` and `.csproj` files
 Run only tests that were added or modified in a GitHub pull request:
 
 ```bash
+# Launch TUI with only changed tests loaded
 testament pr https://github.com/owner/repo/pull/123
+
+# Run tests directly without TUI
+testament pr https://github.com/owner/repo/pull/123 --no-tui
 ```
 
 This command:
 1. Fetches the PR diff from GitHub
-2. Extracts test methods from changed files (supports xUnit, NUnit, MSTest)
-3. Runs matching tests with `dotnet test --filter`
+2. Identifies test projects containing changed test files
+3. Extracts test methods from changed files (supports xUnit, NUnit, MSTest)
+4. Loads only the changed tests in the TUI (or runs them directly with `--no-tui`)
 
 **Authentication:** Set `GITHUB_TOKEN` environment variable or use `gh auth login`. Without authentication, you may hit GitHub's rate limits.
-
-### Configuration
-
-Create a `.testament.toml` file in your solution directory to customize behavior:
-
-```toml
-[runner]
-parallel = 4                    # Number of parallel test workers (0 = default)
-extra_args = ["--no-build"]     # Additional args passed to dotnet test
-
-[watch]
-debounce_ms = 500               # Delay before running tests after file change
-patterns = ["*.cs", "*.csproj"] # File patterns to watch
-ignore = ["**/obj/**", "**/bin/**"]  # Patterns to ignore
-```
 
 ## Contributing
 
