@@ -12,7 +12,7 @@ use std::process::Command;
 
 use cli::{Cli, Command as CliCommand};
 use git::{extract_changed_tests, fetch_pr_diff, get_github_token, parse_pr_url};
-use runner::{discover_projects_lazy, find_solution};
+use runner::{discover_projects_lazy, discover_projects_from_paths, find_solution};
 
 fn main() {
     let cli = Cli::parse_args();
@@ -43,8 +43,13 @@ fn main() {
     };
 
     let solution_dir = sln_path.parent().unwrap_or(&start_dir).to_path_buf();
+    
+    // Build context string from solution/project name
+    let context = sln_path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| format!("Running Tests for Solution: {}", name));
 
-    if let Err(e) = app::run(projects, solution_dir, discovery_rx) {
+    if let Err(e) = app::run(projects, solution_dir, discovery_rx, context) {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
@@ -156,17 +161,10 @@ fn run_pr_mode(url: &str, path: Option<std::path::PathBuf>, no_tui: bool) {
             }
         }
     } else {
-        // Launch TUI with pre-selected tests (default behavior)
+        // Launch TUI with only the changed projects (not all projects in solution)
         let start_dir = path.unwrap_or_else(|| env::current_dir().unwrap());
-        let sln_path = match find_solution(&start_dir) {
-            Ok(p) => p,
-            Err(_) => {
-                // Use first project path as fallback
-                project_paths[0].clone()
-            }
-        };
-
-        let (projects, discovery_rx) = match discover_projects_lazy(&sln_path) {
+        
+        let (projects, discovery_rx) = match discover_projects_from_paths(project_paths.clone()) {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("Failed to discover projects: {}", e);
@@ -174,9 +172,15 @@ fn run_pr_mode(url: &str, path: Option<std::path::PathBuf>, no_tui: bool) {
             }
         };
 
-        let solution_dir = sln_path.parent().unwrap_or(&start_dir).to_path_buf();
+        // Use the first project's parent or start_dir as solution_dir
+        let solution_dir = project_paths.first()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or(start_dir);
 
-        if let Err(e) = app::run_with_preselected(projects, solution_dir, discovery_rx, test_names) {
+        let context = Some(format!("Running Tests for PR #{}", pr_info.number));
+
+        if let Err(e) = app::run_with_preselected(projects, solution_dir, discovery_rx, test_names, context) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }

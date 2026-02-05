@@ -19,8 +19,9 @@ pub fn run(
     projects: Vec<TestProject>,
     solution_dir: PathBuf,
     discovery_rx: mpsc::Receiver<DiscoveryEvent>,
+    context: Option<String>,
 ) -> io::Result<()> {
-    run_with_preselected(projects, solution_dir, discovery_rx, Vec::new())
+    run_with_preselected(projects, solution_dir, discovery_rx, Vec::new(), context)
 }
 
 pub fn run_with_preselected(
@@ -28,6 +29,7 @@ pub fn run_with_preselected(
     solution_dir: PathBuf,
     discovery_rx: mpsc::Receiver<DiscoveryEvent>,
     preselected_tests: Vec<String>,
+    context: Option<String>,
 ) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
@@ -40,9 +42,12 @@ pub fn run_with_preselected(
     state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
     state.discovering = true;
     state.status = "Discovering tests...".to_string();
+    state.context = context;
+    state.output_auto_scroll = true;
     
     // Store preselected test names to match after discovery
     let preselected = preselected_tests;
+    let filter_to_preselected = !preselected.is_empty();
 
     let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
@@ -56,6 +61,13 @@ pub fn run_with_preselected(
             while let Ok(event) = discovery_rx.try_recv() {
                 match event {
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
+                        // Filter to only preselected tests if in PR mode
+                        let classes = if filter_to_preselected {
+                            filter_classes_to_tests(&classes, &preselected)
+                        } else {
+                            classes
+                        };
+                        
                         // Add all class names to collapsed set (start collapsed)
                         // Get project name first for the collapse key
                         let project_name = state.projects.get(idx)
@@ -94,22 +106,19 @@ pub fn run_with_preselected(
                         state.status = "Ready".to_string();
                         state.append_output(&format!("\n{}", random_ready_phrase()));
                         
-                        // Pre-select tests if any were specified
-                        if !preselected.is_empty() {
-                            let mut matched = 0;
+                        // Auto-select all tests in PR mode (they're already filtered)
+                        if filter_to_preselected {
+                            let mut count = 0;
                             for project in &state.projects {
                                 for class in &project.classes {
                                     for test in &class.tests {
-                                        // Match by method name (partial match)
-                                        if preselected.iter().any(|name| test.name.contains(name) || name.contains(&test.name)) {
-                                            state.selected_tests.insert(test.full_name.clone());
-                                            matched += 1;
-                                        }
+                                        state.selected_tests.insert(test.full_name.clone());
+                                        count += 1;
                                     }
                                 }
                             }
-                            if matched > 0 {
-                                state.append_output(&format!("\n[PR] Pre-selected {} test(s) from PR changes.", matched));
+                            if count > 0 {
+                                state.append_output(&format!("\n[PR] Loaded {} changed test(s).", count));
                                 // Expand all classes to show selected tests
                                 state.collapsed_classes.clear();
                             }
@@ -494,7 +503,7 @@ fn run_tests(
 
         state.output_auto_scroll = true;
         state.append_output("\n────────────────────────────\n");
-        state.append_output("Running tests...\n");
+        state.append_output("Running tests...");
         state.test_progress = Some((0, total_tests));
 
         let executor = TestExecutor::new(&path);
@@ -786,4 +795,30 @@ fn move_to_prev_group(state: &mut AppState) {
             return;
         }
     }
+}
+
+/// Filter test classes to only include tests matching the given names
+fn filter_classes_to_tests(classes: &[crate::model::TestClass], test_names: &[String]) -> Vec<crate::model::TestClass> {
+    classes
+        .iter()
+        .filter_map(|class| {
+            let filtered_tests: Vec<_> = class.tests
+                .iter()
+                .filter(|test| {
+                    test_names.iter().any(|name| test.name.contains(name) || name.contains(&test.name))
+                })
+                .cloned()
+                .collect();
+            
+            if filtered_tests.is_empty() {
+                None
+            } else {
+                Some(crate::model::TestClass {
+                    namespace: class.namespace.clone(),
+                    name: class.name.clone(),
+                    tests: filtered_tests,
+                })
+            }
+        })
+        .collect()
 }

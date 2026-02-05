@@ -119,6 +119,7 @@ pub struct AppState {
     pub test_progress: Option<(usize, usize)>,
     pub discovering: bool,
     pub status: String,
+    pub context: Option<String>,
 }
 
 impl AppState {
@@ -149,6 +150,7 @@ impl AppState {
             test_progress: None,
             discovering: false,
             status: "Ready".to_string(),
+            context: None,
         }
     }
 
@@ -167,7 +169,7 @@ impl AppState {
 
         // Calculate total wrapped lines accounting for line wrapping
         let content_width = self.output_width.saturating_sub(2) as usize;
-        let total_lines: u16 = self.output.lines().map(|line| {
+        let mut total_lines: u16 = self.output.lines().map(|line| {
             if content_width == 0 || line.is_empty() {
                 1
             } else {
@@ -175,6 +177,11 @@ impl AppState {
                 line_len.div_ceil(content_width).max(1) as u16
             }
         }).sum();
+        
+        // Account for trailing newline (adds an extra line)
+        if self.output.ends_with('\n') {
+            total_lines += 1;
+        }
 
         // Scroll so the last line is visible at the bottom
         self.output_scroll = total_lines.saturating_sub(self.output_visible_lines);
@@ -235,10 +242,26 @@ impl AppState {
 }
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
-    let main_chunks = Layout::default()
+    // Split into optional header, main content, and status bar
+    let has_context = state.context.is_some();
+    let outer_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints(if has_context {
+            vec![Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)]
+        } else {
+            vec![Constraint::Length(0), Constraint::Min(0), Constraint::Length(1)]
+        })
         .split(frame.area());
+
+    // Render context header if present
+    if let Some(ref context) = state.context {
+        let header = Paragraph::new(context.as_str())
+            .style(Style::default().fg(state.theme.highlight).add_modifier(Modifier::BOLD));
+        frame.render_widget(header, outer_chunks[0]);
+    }
+
+    let main_area = outer_chunks[1];
+    let status_area = outer_chunks[2];
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -247,7 +270,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             Constraint::Percentage(40),
             Constraint::Percentage(40),
         ])
-        .split(main_chunks[0]);
+        .split(main_area);
 
     // Right side: Split into Output (top 50%) and Test Result (bottom 50%)
     let right_chunks = Layout::default()
@@ -313,7 +336,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let status_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(0), Constraint::Length(state.status.len() as u16 + 2)])
-        .split(main_chunks[1]);
+        .split(status_area);
 
     let watch_indicator = if state.watch_mode { "[WATCH] " } else { "" };
     let left_status = if state.filter_active {
@@ -364,7 +387,7 @@ fn get_selected_test_with_context<'a>(
         if let Some(idx) = state.project_state.selected() {
             if let Some(project) = state.projects.get(idx) {
                 let test_count = project.test_count();
-                let message = format!("Tests found in project: {}\n\nTotal tests: {}", project.name, test_count);
+                let message = format!("Tests found in project: {}", test_count);
                 return (None, Some(message));
             }
         }
@@ -388,11 +411,10 @@ fn get_selected_test_with_context<'a>(
                 }
                 TestListItem::Class(class_name) => {
                     // Find test count for this class
-                    let display_name = if class_name.is_empty() { "Uncategorized" } else { class_name.as_str() };
                     for class in classes {
                         if &class.full_name() == class_name {
                             let test_count = class.tests.len();
-                            let message = format!("Tests found in class: {}\n\nTotal tests: {}", display_name, test_count);
+                            let message = format!("Tests found in class: {}", test_count);
                             return (None, Some(message));
                         }
                     }
@@ -401,7 +423,7 @@ fn get_selected_test_with_context<'a>(
                         for class in classes {
                             if class.full_name().is_empty() {
                                 let test_count = class.tests.len();
-                                let message = format!("Tests found in class: {}\n\nTotal tests: {}", display_name, test_count);
+                                let message = format!("Tests found in class: {}", test_count);
                                 return (None, Some(message));
                             }
                         }
