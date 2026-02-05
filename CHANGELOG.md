@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab navigation now cycles through all four panes: Projects -> Tests -> Output -> TestResult -> Projects
 - Arrow key scrolling in Test Result pane when focused
 - `R` (Shift+R) keybinding to run all tests in the project
+- Left/Right arrow keys jump to previous/next test group (class)
+- Test group status indicators showing aggregate pass/fail status for each class
 
 ### Changed
 - Right panel split into Output (top 50%) and Test Result (bottom 50%)
@@ -25,9 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Status indicator shows "Discovering tests..." instead of "Discovering..."
 - Empty class names display as "Uncategorized"
 - `r` now runs the test under cursor (or class tests if class selected, or selected tests if any are multi-selected)
+- TRX parser now captures error messages and stack traces from failed tests
 
 ### Fixed
 - Auto-scroll in output pane now waits for actual panel dimensions before scrolling
+- Discovery reliability improved with --no-build fallback to avoid parallel build conflicts
 
 ## v0.3.5 - 2026-02-05
 

@@ -195,6 +195,12 @@ pub fn run(
                     KeyCode::Up => {
                         move_selection(&mut state, -1);
                     }
+                    KeyCode::Left => {
+                        move_to_prev_group(&mut state);
+                    }
+                    KeyCode::Right => {
+                        move_to_next_group(&mut state);
+                    }
                     KeyCode::Tab => {
                         state.active_pane = match state.active_pane {
                             Pane::Projects => Pane::Tests,
@@ -637,5 +643,83 @@ fn run_class_tests(
 
         let executor = TestExecutor::new(&path);
         *executor_rx = Some(executor.run(Some(tests)));
+    }
+}
+
+/// Navigate to the next test group (class)
+fn move_to_next_group(state: &mut AppState) {
+    if state.active_pane != Pane::Tests {
+        return;
+    }
+
+    let project_idx = match state.project_state.selected() {
+        Some(idx) => idx,
+        None => return,
+    };
+    let project = match state.projects.get(project_idx) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    if items.is_empty() {
+        return;
+    }
+
+    let current_idx = state.test_state.selected().unwrap_or(0);
+
+    // Find next class after current position
+    for (i, item) in items.iter().enumerate().skip(current_idx + 1) {
+        if matches!(item, TestListItem::Class(_)) {
+            state.test_state.select(Some(i));
+            return;
+        }
+    }
+
+    // Wrap around to first class
+    for (i, item) in items.iter().enumerate() {
+        if matches!(item, TestListItem::Class(_)) {
+            state.test_state.select(Some(i));
+            return;
+        }
+    }
+}
+
+/// Navigate to the previous test group (class)
+fn move_to_prev_group(state: &mut AppState) {
+    if state.active_pane != Pane::Tests {
+        return;
+    }
+
+    let project_idx = match state.project_state.selected() {
+        Some(idx) => idx,
+        None => return,
+    };
+    let project = match state.projects.get(project_idx) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    if items.is_empty() {
+        return;
+    }
+
+    let current_idx = state.test_state.selected().unwrap_or(0);
+
+    // Find previous class before current position
+    for i in (0..current_idx).rev() {
+        if matches!(items.get(i), Some(TestListItem::Class(_))) {
+            state.test_state.select(Some(i));
+            return;
+        }
+    }
+
+    // Wrap around to last class
+    for i in (0..items.len()).rev() {
+        if matches!(items.get(i), Some(TestListItem::Class(_))) {
+            state.test_state.select(Some(i));
+            return;
+        }
     }
 }

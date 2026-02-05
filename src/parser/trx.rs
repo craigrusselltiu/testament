@@ -25,9 +25,60 @@ pub fn parse_trx(content: &str) -> Result<Vec<TestResult>> {
     let mut results = Vec::new();
     let mut buf = Vec::new();
 
+    // Current test being parsed
+    let mut current_test: Option<TestResult> = None;
+    let mut in_error_info = false;
+    let mut in_message = false;
+    let mut in_stack_trace = false;
+    let mut error_message = String::new();
+    let mut stack_trace = String::new();
+
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"UnitTestResult" => {
+            Ok(Event::Start(e)) => {
+                match e.name().as_ref() {
+                    b"UnitTestResult" => {
+                        let mut test_name = String::new();
+                        let mut outcome = TestOutcome::Passed;
+                        let mut duration_ms = 0u64;
+
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"testName" => {
+                                    test_name = String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                b"outcome" => {
+                                    let val = String::from_utf8_lossy(&attr.value);
+                                    outcome = match val.as_ref() {
+                                        "Passed" => TestOutcome::Passed,
+                                        "Failed" => TestOutcome::Failed,
+                                        _ => TestOutcome::Skipped,
+                                    };
+                                }
+                                b"duration" => {
+                                    let val = String::from_utf8_lossy(&attr.value);
+                                    duration_ms = parse_duration(&val);
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if !test_name.is_empty() {
+                            current_test = Some(TestResult {
+                                test_name,
+                                outcome,
+                                duration_ms,
+                                error_message: None,
+                            });
+                        }
+                    }
+                    b"ErrorInfo" => in_error_info = true,
+                    b"Message" if in_error_info => in_message = true,
+                    b"StackTrace" if in_error_info => in_stack_trace = true,
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) if e.name().as_ref() == b"UnitTestResult" => {
                 let mut test_name = String::new();
                 let mut outcome = TestOutcome::Passed;
                 let mut duration_ms = 0u64;
@@ -60,6 +111,39 @@ pub fn parse_trx(content: &str) -> Result<Vec<TestResult>> {
                         duration_ms,
                         error_message: None,
                     });
+                }
+            }
+            Ok(Event::Text(e)) => {
+                if in_message {
+                    error_message.push_str(&e.unescape().unwrap_or_default());
+                } else if in_stack_trace {
+                    stack_trace.push_str(&e.unescape().unwrap_or_default());
+                }
+            }
+            Ok(Event::End(e)) => {
+                match e.name().as_ref() {
+                    b"UnitTestResult" => {
+                        if let Some(mut test) = current_test.take() {
+                            // Combine error message and stack trace
+                            if !error_message.is_empty() || !stack_trace.is_empty() {
+                                let mut full_error = error_message.trim().to_string();
+                                if !stack_trace.is_empty() {
+                                    if !full_error.is_empty() {
+                                        full_error.push_str("\n\n");
+                                    }
+                                    full_error.push_str(stack_trace.trim());
+                                }
+                                test.error_message = Some(full_error);
+                            }
+                            results.push(test);
+                            error_message.clear();
+                            stack_trace.clear();
+                        }
+                    }
+                    b"ErrorInfo" => in_error_info = false,
+                    b"Message" => in_message = false,
+                    b"StackTrace" => in_stack_trace = false,
+                    _ => {}
                 }
             }
             Ok(Event::Eof) => break,

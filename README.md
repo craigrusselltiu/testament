@@ -99,7 +99,8 @@ Testament will automatically:
 | `a` | Run failed tests from last run |
 | `w` | Toggle watch mode |
 | `x` | Clear output |
-| `Arrow keys` | Navigate up/down |
+| `Up/Down` | Navigate within list |
+| `Left/Right` | Jump to previous/next test group |
 | `Tab` | Switch to next pane |
 | `Shift+Tab` | Switch to previous pane |
 | `Space` | Toggle collapse (on class) or select (on test) |
