@@ -94,7 +94,8 @@ Testament will automatically:
 |-----|--------|
 | `q` | Quit |
 | `b` | Build project only |
-| `r` | Run tests (all or selected) |
+| `r` | Run test under cursor (or selected tests if any) |
+| `R` | Run all tests in project |
 | `a` | Run failed tests from last run |
 | `w` | Toggle watch mode |
 | `x` | Clear output |

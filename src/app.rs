@@ -241,13 +241,36 @@ pub fn run(
                     }
                     KeyCode::Char('r') => {
                         if executor_rx.is_none() {
-                            // Check if a class is selected in the Tests pane
+                            // If tests are multi-selected, run those
+                            if !state.selected_tests.is_empty() {
+                                run_tests(&mut state, &mut executor_rx);
+                                continue;
+                            }
+                            
+                            // If in Tests pane, check what's under cursor
                             if state.active_pane == Pane::Tests {
+                                // Check if a class is selected - run all tests in that class
                                 if let Some(class_tests) = get_selected_class_tests(&state) {
                                     run_class_tests(&mut state, &mut executor_rx, class_tests);
                                     continue;
                                 }
+                                
+                                // Check if a single test is selected - run just that test
+                                if let Some(test_name) = get_selected_single_test(&state) {
+                                    run_class_tests(&mut state, &mut executor_rx, vec![test_name]);
+                                    continue;
+                                }
                             }
+                            
+                            // Fallback: run all tests in project
+                            run_tests(&mut state, &mut executor_rx);
+                        }
+                    }
+                    KeyCode::Char('R') => {
+                        // Shift+R: always run all tests in the project
+                        if executor_rx.is_none() {
+                            // Clear selection to run all tests
+                            state.selected_tests.clear();
                             run_tests(&mut state, &mut executor_rx);
                         }
                     }
@@ -543,6 +566,21 @@ fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
                 }
             }
         }
+    }
+
+    None
+}
+
+/// Get the currently selected single test, if a test (not class) is selected.
+fn get_selected_single_test(state: &AppState) -> Option<String> {
+    let project_idx = state.project_state.selected()?;
+    let project = state.projects.get(project_idx)?;
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let selected_idx = state.test_state.selected()?;
+    let item = items.get(selected_idx)?;
+
+    if let TestListItem::Test(test_full_name) = item {
+        return Some(test_full_name.clone());
     }
 
     None

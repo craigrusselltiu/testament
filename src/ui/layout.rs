@@ -290,6 +290,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
             "q:quit",
             "b:build",
             "r:run",
+            "R:run-all",
             "w:watch",
             "Tab:switch",
         ];

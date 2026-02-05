@@ -13,19 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Error message and stack trace for failed tests (scrollable)
   - Updates in real-time as you navigate between tests
   - Shows "No test selected." when no test is highlighted
-- Four-pane layout: Projects | Tests | Output (40%) / Test Result (60%)
+- Four-pane layout: Projects | Tests | Output (50%) / Test Result (50%)
 - Tab navigation now cycles through all four panes: Projects -> Tests -> Output -> TestResult -> Projects
 - Arrow key scrolling in Test Result pane when focused
+- `R` (Shift+R) keybinding to run all tests in the project
 
 ### Changed
-- Right panel split into Output (top 40%) and Test Result (bottom 60%)
+- Right panel split into Output (top 50%) and Test Result (bottom 50%)
 - Groups in Tests pane now start collapsed by default
 - Collapse icons changed from v/> to +/- for better visibility
 - Status indicator shows "Discovering tests..." instead of "Discovering..."
 - Empty class names display as "Uncategorized"
+- `r` now runs the test under cursor (or class tests if class selected, or selected tests if any are multi-selected)
 
 ### Fixed
-- Running tests with 'r' when a class is selected now only runs tests in that class
+- Auto-scroll in output pane now waits for actual panel dimensions before scrolling
 
 ## v0.3.5 - 2026-02-05
 
