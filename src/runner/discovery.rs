@@ -232,18 +232,32 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
         
-        // Include both stdout and stderr - errors can appear in either
-        let mut error_parts = Vec::new();
-        if !stdout.is_empty() {
-            error_parts.push(stdout.to_string());
-        }
-        if !stderr.is_empty() {
-            error_parts.push(stderr.to_string());
-        }
-        let error_detail = if error_parts.is_empty() {
-            format!("Exit code: {:?}", output.status.code())
+        // Filter out build noise to show actual errors
+        let filter_build_noise = |s: &str| -> String {
+            s.lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    !trimmed.is_empty()
+                        && !trimmed.starts_with("Determining projects")
+                        && !trimmed.starts_with("All projects are up-to-date")
+                        && !trimmed.starts_with("Restored ")
+                        && !trimmed.contains("-> ") // Build output like "Project -> path.dll"
+                        && !trimmed.starts_with("Build started")
+                        && !trimmed.starts_with("Build succeeded")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        
+        let filtered_stdout = filter_build_noise(&stdout);
+        let filtered_stderr = filter_build_noise(&stderr);
+        
+        let error_detail = if !filtered_stderr.is_empty() {
+            filtered_stderr
+        } else if !filtered_stdout.is_empty() {
+            filtered_stdout
         } else {
-            error_parts.join("\n")
+            format!("Exit code: {:?}", output.status.code())
         };
         
         return Err(TestamentError::DotnetExecution(error_detail));
