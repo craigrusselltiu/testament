@@ -11,6 +11,7 @@ use crate::ui::theme::Theme;
 
 pub struct TestResultPane<'a> {
     test: Option<&'a Test>,
+    context_message: Option<String>,
     theme: &'a Theme,
     focused: bool,
     scroll: u16,
@@ -20,10 +21,16 @@ impl<'a> TestResultPane<'a> {
     pub fn new(test: Option<&'a Test>, theme: &'a Theme, focused: bool, scroll: u16) -> Self {
         Self {
             test,
+            context_message: None,
             theme,
             focused,
             scroll,
         }
+    }
+
+    pub fn with_context(mut self, message: Option<String>) -> Self {
+        self.context_message = message;
+        self
     }
 
     fn status_text(&self, status: &TestStatus) -> (&'static str, Style) {
@@ -75,7 +82,8 @@ impl Widget for TestResultPane<'_> {
 
         match self.test {
             None => {
-                let text = Paragraph::new("No test selected.")
+                let message = self.context_message.as_deref().unwrap_or("No test selected.");
+                let text = Paragraph::new(message)
                     .style(Style::default().fg(self.theme.fg));
                 text.render(inner, buf);
             }

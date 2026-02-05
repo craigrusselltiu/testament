@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.5.0 - 2026-02-06
+
+### Added
+- **PR test runner** - New `testament pr <url>` command to run only tests added/modified in a GitHub PR:
+  - Parses PR URL to extract owner/repo/number
+  - Fetches PR diff from GitHub API (supports GITHUB_TOKEN or `gh auth token`)
+  - Extracts test methods from diff using pattern matching (supports xUnit, NUnit, MSTest)
+  - Runs matching tests with `dotnet test --filter`
+  - `--tui` flag available (implementation pending)
+
+### Changed
+- **Alphabetical sorting** - Tests panel now displays classes and tests sorted alphabetically (case-insensitive)
+- **Per-project collapse state** - Expanding/collapsing test classes is now independent per project; previously "Uncategorized" and other classes shared collapse state across all projects
+
+### Fixed
+- **Auto-scroll in Output panel** - Output panel now correctly auto-scrolls when new lines are added
+
 ## v0.4.0 - 2026-02-05
 
 ### Added

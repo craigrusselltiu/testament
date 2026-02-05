@@ -20,6 +20,15 @@ pub fn run(
     solution_dir: PathBuf,
     discovery_rx: mpsc::Receiver<DiscoveryEvent>,
 ) -> io::Result<()> {
+    run_with_preselected(projects, solution_dir, discovery_rx, Vec::new())
+}
+
+pub fn run_with_preselected(
+    projects: Vec<TestProject>,
+    solution_dir: PathBuf,
+    discovery_rx: mpsc::Receiver<DiscoveryEvent>,
+    preselected_tests: Vec<String>,
+) -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -31,6 +40,9 @@ pub fn run(
     state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
     state.discovering = true;
     state.status = "Discovering tests...".to_string();
+    
+    // Store preselected test names to match after discovery
+    let preselected = preselected_tests;
 
     let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
@@ -45,13 +57,18 @@ pub fn run(
                 match event {
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
                         // Add all class names to collapsed set (start collapsed)
+                        // Get project name first for the collapse key
+                        let project_name = state.projects.get(idx)
+                            .map(|p| p.name.clone())
+                            .unwrap_or_default();
                         for class in &classes {
                             let class_full_name = if class.namespace.is_empty() {
                                 class.name.clone()
                             } else {
                                 format!("{}.{}", class.namespace, class.name)
                             };
-                            state.collapsed_classes.insert(class_full_name);
+                            let collapse_key = AppState::collapse_key(&project_name, &class_full_name);
+                            state.collapsed_classes.insert(collapse_key);
                         }
                         if let Some(project) = state.projects.get_mut(idx) {
                             project.classes = classes;
@@ -76,6 +93,27 @@ pub fn run(
                         state.discovering = false;
                         state.status = "Ready".to_string();
                         state.append_output(&format!("\n{}", random_ready_phrase()));
+                        
+                        // Pre-select tests if any were specified
+                        if !preselected.is_empty() {
+                            let mut matched = 0;
+                            for project in &state.projects {
+                                for class in &project.classes {
+                                    for test in &class.tests {
+                                        // Match by method name (partial match)
+                                        if preselected.iter().any(|name| test.name.contains(name) || name.contains(&test.name)) {
+                                            state.selected_tests.insert(test.full_name.clone());
+                                            matched += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            if matched > 0 {
+                                state.append_output(&format!("\n[PR] Pre-selected {} test(s) from PR changes.", matched));
+                                // Expand all classes to show selected tests
+                                state.collapsed_classes.clear();
+                            }
+                        }
                     }
                 }
             }
@@ -228,6 +266,17 @@ pub fn run(
                         state.test_progress = None;
                     }
                     KeyCode::Char('c') => {
+                        // Expand/collapse all classes in current project
+                        if let Some(idx) = state.project_state.selected() {
+                            if let Some(project) = state.projects.get(idx) {
+                                let project_name = project.name.clone();
+                                let classes = project.classes.clone();
+                                state.toggle_expand_collapse_all(&project_name, &classes);
+                            }
+                        }
+                    }
+                    KeyCode::Char('C') => {
+                        // Clear test selections
                         state.clear_selection();
                     }
                     KeyCode::Char('/') => {
@@ -335,6 +384,7 @@ fn move_selection(state: &mut AppState, delta: i32) {
                         &project.classes,
                         &state.collapsed_classes,
                         &state.filter,
+                        &project.name,
                     );
                     let len = items.len();
                     if len == 0 {
@@ -363,15 +413,29 @@ fn move_selection(state: &mut AppState, delta: i32) {
 
 fn toggle_collapse(state: &mut AppState) {
     if let Some(idx) = state.project_state.selected() {
-        if let Some(project) = state.projects.get(idx) {
-            let items =
-                build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
-            if let Some(selected) = state.test_state.selected() {
-                if let Some(TestListItem::Class(class_name)) = items.get(selected) {
-                    state.toggle_class_collapsed(class_name);
+        // Clone what we need to avoid borrow issues
+        let (project_name, class_name) = {
+            if let Some(project) = state.projects.get(idx) {
+                let items = build_test_items(
+                    &project.classes,
+                    &state.collapsed_classes,
+                    &state.filter,
+                    &project.name,
+                );
+                if let Some(selected) = state.test_state.selected() {
+                    if let Some(TestListItem::Class(class_name)) = items.get(selected) {
+                        (project.name.clone(), class_name.clone())
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
                 }
+            } else {
+                return;
             }
-        }
+        };
+        state.toggle_class_collapsed(&project_name, &class_name);
     }
 }
 
@@ -379,7 +443,7 @@ fn toggle_space_action(state: &mut AppState) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
             let items =
-                build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+                build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
             if let Some(selected) = state.test_state.selected() {
                 if let Some(item) = items.get(selected) {
                     match item {
@@ -576,7 +640,7 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
 fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
     let project_idx = state.project_state.selected()?;
     let project = state.projects.get(project_idx)?;
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
     let selected_idx = state.test_state.selected()?;
     let item = items.get(selected_idx)?;
 
@@ -599,7 +663,7 @@ fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
 fn get_selected_single_test(state: &AppState) -> Option<String> {
     let project_idx = state.project_state.selected()?;
     let project = state.projects.get(project_idx)?;
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
     let selected_idx = state.test_state.selected()?;
     let item = items.get(selected_idx)?;
 
@@ -661,7 +725,7 @@ fn move_to_next_group(state: &mut AppState) {
         None => return,
     };
 
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
     if items.is_empty() {
         return;
     }
@@ -700,7 +764,7 @@ fn move_to_prev_group(state: &mut AppState) {
         None => return,
     };
 
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
     if items.is_empty() {
         return;
     }

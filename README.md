@@ -1,6 +1,6 @@
 # Testament
 
-![Version](https://img.shields.io/badge/version-0.4.0-green)
+![Version](https://img.shields.io/badge/version-0.5.0-green)
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -10,9 +10,16 @@ It treats test results as evidence; passing tests stand as a testament to correc
 
 ## Overview
 
-Testament is a terminal UI application for discovering, running, and monitoring .NET tests. It wraps `dotnet test` with an interactive interface featuring real-time output streaming, watch mode, and keyboard-driven navigation.
+Testament is a terminal UI application for discovering, running, and monitoring .NET tests. It wraps `dotnet test` with an interactive interface featuring:
 
-Testament solves the problem of managing test execution in large .NET solutions by providing a focused, distraction-free interface that lets you quickly navigate between projects, select specific tests, and view results without leaving the terminal.
+- **Four-pane layout** with projects, tests (grouped by class), output, and test result details
+- **Real-time output streaming** during test execution
+- **Test class grouping** via C# source parsing with collapsible groups
+- **Watch mode** for automatic test re-runs on file changes
+- **Lazy test discovery** for instant startup
+- **PR test runner** to run only tests changed in a GitHub pull request
+
+Testament solves the problem of managing test execution in large .NET solutions by providing a focused, distraction-free interface that lets you quickly navigate between projects, select specific tests, and view detailed results without leaving the terminal.
 
 <img width="2556" height="1385" alt="image" src="https://github.com/user-attachments/assets/9981bd16-dece-4537-8534-ae62c685009c" />
 
@@ -23,6 +30,8 @@ Testament solves the problem of managing test execution in large .NET solutions 
 - [Crossterm](https://docs.rs/crossterm/) - Cross-platform terminal manipulation
 - [Tokio](https://tokio.rs/) - Async runtime for concurrent test execution
 - [quick-xml](https://docs.rs/quick-xml/) - TRX test result file parsing
+- [tree-sitter](https://tree-sitter.github.io/) - C# source parsing for test class grouping
+- [notify](https://docs.rs/notify/) - File system watching for watch mode
 
 **External Dependencies:**
 - [.NET SDK](https://dotnet.microsoft.com/download) - Required for `dotnet test` execution
@@ -94,28 +103,30 @@ Testament will automatically:
 |-----|--------|
 | `q` | Quit |
 | `b` | Build project only |
-| `r` | Run test under cursor (or selected tests if any) |
+| `r` | Run test under cursor (or class tests, or selected tests) |
 | `R` | Run all tests in project |
 | `a` | Run failed tests from last run |
 | `w` | Toggle watch mode |
 | `x` | Clear output |
+| `c` | Expand/collapse all classes |
+| `C` | Clear all selections |
 | `Up/Down` | Navigate within list |
-| `Left/Right` | Jump to previous/next test group |
+| `Left/Right` | Jump to previous/next test class |
 | `Tab` | Switch to next pane |
 | `Shift+Tab` | Switch to previous pane |
 | `Space` | Toggle collapse (on class) or select (on test) |
-| `c` | Clear all selections |
 | `/` | Start filter mode |
+| `Enter` | Apply filter |
 | `Esc` | Clear filter |
 
 ### Navigating Panes
 
 1. **Projects** (left) - List of test projects in your solution
-2. **Tests** (middle) - Test classes and methods for the selected project
+2. **Tests** (middle) - Test classes (collapsible) and methods for the selected project
 3. **Output** (right top) - Test execution output and build results
-4. **Test Result** (right bottom) - Details of the selected test (status, duration, errors)
+4. **Test Result** (right bottom) - Details of the selected test (status, duration, error messages, stack traces)
 
-Use `Tab` and `Shift+Tab` to move between panes.
+Use `Tab` and `Shift+Tab` to cycle between panes.
 
 ### Running Specific Tests
 
@@ -125,16 +136,33 @@ Use `Tab` and `Shift+Tab` to move between panes.
 4. Press `r` to run only selected tests
 5. Press `c` to clear selection
 
+You can also press `r` on a class to run all tests in that class, or `R` to run all tests in the project.
+
 ### Filtering Tests
 
 1. Press `/` to enter filter mode
-2. Type your filter text (case-insensitive)
+2. Type your filter text (case-insensitive, matches test and class names)
 3. Press `Enter` to apply
 4. Press `Esc` to clear the filter
 
 ### Watch Mode
 
 Press `w` to enable watch mode. Testament will monitor `.cs` and `.csproj` files and automatically re-run tests when changes are detected.
+
+### PR Test Runner
+
+Run only tests that were added or modified in a GitHub pull request:
+
+```bash
+testament pr https://github.com/owner/repo/pull/123
+```
+
+This command:
+1. Fetches the PR diff from GitHub
+2. Extracts test methods from changed files (supports xUnit, NUnit, MSTest)
+3. Runs matching tests with `dotnet test --filter`
+
+**Authentication:** Set `GITHUB_TOKEN` environment variable or use `gh auth login`. Without authentication, you may hit GitHub's rate limits.
 
 ### Configuration
 
