@@ -8,6 +8,16 @@ use crate::error::{Result, TestamentError};
 use crate::model::{Test, TestClass, TestProject};
 use crate::parser::build_test_name_map;
 
+/// Strip Windows UNC prefix (\\?\) from path - dotnet CLI doesn't handle it well
+fn strip_unc_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        PathBuf::from(&s[4..])
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Events sent during background test discovery
 pub enum DiscoveryEvent {
     /// Tests discovered for a project (project index, test classes)
@@ -26,6 +36,8 @@ pub enum DiscoveryEvent {
 pub fn find_solution(start: &Path) -> Result<PathBuf> {
     // Canonicalize the path to resolve ./ and normalize separators
     let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    // Strip Windows UNC prefix (\\?\) which dotnet doesn't handle well
+    let start = strip_unc_prefix(&start);
     
     // If start is a file, check if it's a valid solution/project file
     if start.is_file() {
