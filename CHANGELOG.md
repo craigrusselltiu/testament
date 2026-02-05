@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.0.0 - 2026-02-05
+
+Official release.
+
+### Added
+- **Discovery caching** - Test discovery results are cached in temp directory, keyed by csproj modification time. Subsequent runs skip expensive `dotnet test --list-tests` when project unchanged.
+- **Context header** - TUI now displays "Running Tests for Solution: X.sln" or "Running Tests for PR #123" at the top
+- **PR mode improvements** - Now loads only changed projects and filters to only changed tests (not all tests in affected projects)
+
+### Changed
+- **Performance optimizations**:
+  - Line wrap calculations cached and invalidated only on output change
+  - Filter matching precomputes lowercase once per render instead of per test
+  - Vector pre-allocation in `build_test_items()` with capacity estimation
+- Progress bar now displays inline with "Running tests..." message
+- Test count messages simplified to "Tests found in class: N" format
+
 ## v0.5.0 - 2026-02-06
 
 ### Added
