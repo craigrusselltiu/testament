@@ -525,10 +525,10 @@ fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
     let selected_idx = state.test_state.selected()?;
     let item = items.get(selected_idx)?;
 
-    if let TestListItem::Class(class_name) = item {
+    if let TestListItem::Class(class_full_name) = item {
         // Find the class and collect all its test full names
         for class in &project.classes {
-            if class.name == *class_name {
+            if class.full_name() == *class_full_name {
                 let tests: Vec<String> = class.tests.iter().map(|t| t.full_name.clone()).collect();
                 if !tests.is_empty() {
                     return Some(tests);
