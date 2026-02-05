@@ -73,6 +73,13 @@ impl StatefulWidget for TestList<'_> {
                 continue;
             }
 
+            // Display name - use "Uncategorized" for empty class names
+            let display_name = if class_full_name.is_empty() {
+                "Uncategorized".to_string()
+            } else {
+                class_full_name.clone()
+            };
+
             // Class header with collapse indicator
             let collapse_indicator = if is_collapsed { "+" } else { "-" };
             let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name)).count();
@@ -82,7 +89,7 @@ impl StatefulWidget for TestList<'_> {
                     Style::default().fg(self.theme.highlight),
                 ),
                 Span::styled(
-                    class_full_name,
+                    display_name,
                     Style::default()
                         .fg(self.theme.highlight)
                         .add_modifier(Modifier::BOLD),

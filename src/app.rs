@@ -30,7 +30,7 @@ pub fn run(
     let mut state = AppState::new(projects);
     state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
     state.discovering = true;
-    state.status = "Discovering...".to_string();
+    state.status = "Discovering tests...".to_string();
 
     let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
     let mut file_watcher: Option<FileWatcher> = None;
@@ -44,6 +44,15 @@ pub fn run(
             while let Ok(event) = discovery_rx.try_recv() {
                 match event {
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
+                        // Add all class names to collapsed set (start collapsed)
+                        for class in &classes {
+                            let class_full_name = if class.namespace.is_empty() {
+                                class.name.clone()
+                            } else {
+                                format!("{}.{}", class.namespace, class.name)
+                            };
+                            state.collapsed_classes.insert(class_full_name);
+                        }
                         if let Some(project) = state.projects.get_mut(idx) {
                             project.classes = classes;
                         }
