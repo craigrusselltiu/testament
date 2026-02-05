@@ -131,7 +131,7 @@ impl AppState {
             test_state: ListState::default(),
             output: String::new(),
             output_scroll: 0,
-            output_visible_lines: 20,
+            output_visible_lines: 0,  // Set during first draw
             output_width: 80,
             test_result_scroll: 0,
             theme: Theme::default(),
@@ -154,6 +154,12 @@ impl AppState {
     }
 
     pub fn scroll_output_to_bottom(&mut self) {
+        // Don't auto-scroll until we have real dimensions from first draw
+        // (output_visible_lines defaults to 0, gets set during draw)
+        if self.output_visible_lines == 0 {
+            return;
+        }
+        
         // Account for line wrapping by calculating actual rendered lines
         let content_width = self.output_width.saturating_sub(2) as usize; // subtract borders
         let wrapped_lines: u16 = self.output.lines().map(|line| {
