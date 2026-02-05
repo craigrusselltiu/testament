@@ -40,6 +40,17 @@ const STARTUP_ART: &str = r#"
   ▓█▓▒▓▓▓███▓▓▓▓▓▓▓                   ▓▓▓▓▓▓▓▓▓█████▓█▓
 "#;
 
+const STARTUP_PHRASES: &[&str] = &[
+    "Gathering the witnesses...",
+    "Preparing the trial...",
+    "Assembling the evidence...",
+    "Let there be tests...",
+    "Seeking the truth...",
+    "The testimony awaits...",
+    "In the beginning was the code...",
+    "Try all things...",
+];
+
 const READY_PHRASES: &[&str] = &[
     "Let the truth be known.",
     "The truth shall set you free.",
@@ -63,6 +74,10 @@ fn random_phrase(phrases: &[&'static str]) -> &'static str {
     let seed = (nanos ^ (nanos >> 17) ^ (nanos >> 34)) as usize;
     let index = seed % phrases.len();
     phrases[index]
+}
+
+pub fn random_startup_phrase() -> &'static str {
+    random_phrase(STARTUP_PHRASES)
 }
 
 pub fn random_ready_phrase() -> &'static str {

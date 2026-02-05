@@ -5,14 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v0.4.0 - 2026-02-05
+## v0.3.5 - 2026-02-05
 
 ### Changed
-- **Instant startup with lazy test discovery** - TUI now launches immediately showing project names, while tests are discovered in the background. Projects show "(...)" while discovering, then update to show test count when ready.
+- **Instant startup with lazy test discovery** - TUI now launches immediately showing project names, while tests are discovered in the background. Projects show "(...)" while discovering, then update to show test count when ready. Startup phrase displays during discovery, ready phrase appears when complete.
 - Parallel test discovery - `dotnet test --list-tests` runs concurrently for all test projects
-
-### Removed
-- Removed blocking startup phrase display (no longer needed with instant startup)
 
 ## v0.3.3 - 2026-01-31
 

@@ -13,7 +13,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
 use crate::runner::{DiscoveryEvent, ExecutorEvent, FileWatcher, TestExecutor};
-use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_ready_phrase}, Pane, TestListItem};
+use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_startup_phrase, random_ready_phrase}, Pane, TestListItem};
 
 pub fn run(
     projects: Vec<TestProject>,
@@ -28,7 +28,7 @@ pub fn run(
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AppState::new(projects);
-    state.output = format!("{}\n{}", startup_art(), random_ready_phrase());
+    state.output = format!("{}\n{}", startup_art(), random_startup_phrase());
     state.discovering = true;
 
     let mut executor_rx: Option<mpsc::Receiver<ExecutorEvent>> = None;
@@ -49,6 +49,7 @@ pub fn run(
                     }
                     DiscoveryEvent::Complete => {
                         state.discovering = false;
+                        state.append_output(&format!("\n{}", random_ready_phrase()));
                     }
                 }
             }
