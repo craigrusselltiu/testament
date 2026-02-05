@@ -136,18 +136,28 @@ pub enum OutputSource {
 ├──────────────────────┬─────────────────────────┬─────────────────────────┤
 │ Projects             │ Tests                   │ Output                  │
 │ ────────             │ ─────                   │ ──────                  │
-│ › Api.Tests          │ ▼ AuthTests             │ LoginTest               │
-│   Core.Tests         │   ✓ LoginTest           │ ───────────────         │
-│                      │   ✗ LogoutTest          │ Status: Passed          │
-│                      │   ◐ RefreshTest         │ Duration: 42ms          │
-│                      │ ▶ UserTests (4)         │                         │
-│                      │ ▶ OrderTests (12)       │ Assert.Equal            │
-│                      │                         │ Expected: true          │
-│                      │                         │ Actual: true            │
+│ › Api.Tests          │ + AuthTests             │ Running tests...        │
+│   Core.Tests         │   ✓ LoginTest           │ Build succeeded         │
+│                      │   ✗ LogoutTest          │                         │
+│                      │   ◐ RefreshTest         ├─────────────────────────┤
+│                      │ + UserTests (4)         │ Test Result             │
+│                      │ + OrderTests (12)       │ ───────────             │
+│                      │                         │ Test: LoginTest         │
+│                      │                         │ Status: PASSED          │
+│                      │                         │ Duration: 42ms          │
 ├──────────────────────┴─────────────────────────┴─────────────────────────┤
 │ [r]un  [w]atch  [f]ilter  [a]gain  [q]uit                   48 ✓  2 ✗  1 ○│
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Four-Pane Layout
+
+1. **Projects** (left, 20%) - List of test projects
+2. **Tests** (middle, 40%) - Test classes (collapsible) and test methods
+3. **Output** (right top, 40% of right panel) - Build and test execution output
+4. **Test Result** (right bottom, 60% of right panel) - Details of selected test
+
+Use `Tab`/`Shift+Tab` to navigate: Projects → Tests → Output → Test Result → Projects
 
 ### Status Icons
 
@@ -155,8 +165,8 @@ pub enum OutputSource {
 - `◐` running
 - `✓` passed
 - `✗` failed
-- `▶` collapsed
-- `▼` expanded
+- `+` collapsed class
+- `-` expanded class
 
 ### Color Theme
 

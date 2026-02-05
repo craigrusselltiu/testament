@@ -10,6 +10,8 @@ use crate::parser::build_test_name_map;
 pub enum DiscoveryEvent {
     /// Tests discovered for a project (project index, test classes)
     ProjectDiscovered(usize, Vec<TestClass>),
+    /// Discovery failed for a project (project index, error message)
+    ProjectError(usize, String),
     /// All discovery complete
     Complete,
 }
@@ -43,7 +45,7 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
         // First, look for .sln files
         for entry in &entries {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "sln") {
+            if path.extension().is_some_and(|ext| ext == "sln") {
                 return Ok(path);
             }
         }
@@ -51,7 +53,7 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
         // If no .sln found, look for .csproj files
         for entry in &entries {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "csproj") {
+            if path.extension().is_some_and(|ext| ext == "csproj") {
                 return Ok(path);
             }
         }
@@ -105,7 +107,7 @@ fn is_test_project_name(name: &str) -> bool {
 ///
 /// This allows the TUI to start instantly while test discovery happens in background.
 pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Receiver<DiscoveryEvent>)> {
-    let project_paths = if path.extension().map_or(false, |ext| ext == "csproj") {
+    let project_paths = if path.extension().is_some_and(|ext| ext == "csproj") {
         vec![path.to_path_buf()]
     } else {
         parse_solution(path)?
@@ -141,9 +143,16 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
                     // Build map of method names to full qualified names from C# source
                     let name_map = build_test_name_map(project_dir);
 
-                    if let Ok(test_names) = list_tests(&path) {
-                        let classes = group_tests_by_class(test_names, &name_map);
-                        let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
+                    // Try to list tests, report error if it fails
+                    match list_tests(&path) {
+                        Ok(test_names) => {
+                            let classes = group_tests_by_class(test_names, &name_map);
+                            let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
+                        }
+                        Err(e) => {
+                            let error_msg = format!("{}", e);
+                            let _ = tx.send(DiscoveryEvent::ProjectError(idx, error_msg));
+                        }
                     }
                 })
             })
@@ -160,17 +169,45 @@ pub fn discover_projects_lazy(path: &Path) -> Result<(Vec<TestProject>, mpsc::Re
 }
 
 /// Run `dotnet test --list-tests` to get test names.
+/// First tries with --no-build for speed, falls back to building if that fails.
 fn list_tests(project_path: &Path) -> Result<Vec<String>> {
+    let project_dir = project_path.parent().unwrap_or(Path::new("."));
+    
+    // First try without building (fast if already built)
     let output = Command::new("dotnet")
-        .args(["test", "--list-tests"])
+        .args(["test", "--list-tests", "--no-build"])
         .arg(project_path)
+        .current_dir(project_dir)
         .output()
-        .map_err(|e| TestamentError::DotnetExecution(e.to_string()))?;
+        .map_err(|e| TestamentError::DotnetExecution(format!("Failed to spawn: {}", e)))?;
+
+    // If --no-build failed, try again with build
+    let output = if !output.status.success() {
+        Command::new("dotnet")
+            .args(["test", "--list-tests"])
+            .arg(project_path)
+            .current_dir(project_dir)
+            .output()
+            .map_err(|e| TestamentError::DotnetExecution(format!("Failed to spawn: {}", e)))?
+    } else {
+        output
+    };
 
     if !output.status.success() {
-        return Err(TestamentError::DotnetExecution(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        
+        // Build error message with available information
+        let error_detail = if !stderr.is_empty() {
+            stderr.to_string()
+        } else if !stdout.is_empty() {
+            // Sometimes build errors go to stdout
+            stdout.to_string()
+        } else {
+            format!("Exit code: {:?}", output.status.code())
+        };
+        
+        return Err(TestamentError::DotnetExecution(error_detail));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

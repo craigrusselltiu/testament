@@ -49,6 +49,50 @@ impl<'a> TestList<'a> {
         }
     }
 
+    /// Get aggregate status for a test class
+    fn class_status(&self, class: &TestClass) -> TestStatus {
+        let mut has_failed = false;
+        let mut has_running = false;
+        let mut has_passed = false;
+        let mut all_not_run = true;
+
+        for test in &class.tests {
+            if !self.matches_filter(&test.name) {
+                continue;
+            }
+            match test.status {
+                TestStatus::Failed => {
+                    has_failed = true;
+                    all_not_run = false;
+                }
+                TestStatus::Running => {
+                    has_running = true;
+                    all_not_run = false;
+                }
+                TestStatus::Passed => {
+                    has_passed = true;
+                    all_not_run = false;
+                }
+                TestStatus::Skipped => {
+                    all_not_run = false;
+                }
+                TestStatus::NotRun => {}
+            }
+        }
+
+        if has_failed {
+            TestStatus::Failed
+        } else if has_running {
+            TestStatus::Running
+        } else if all_not_run {
+            TestStatus::NotRun
+        } else if has_passed {
+            TestStatus::Passed
+        } else {
+            TestStatus::Skipped
+        }
+    }
+
     fn matches_filter(&self, name: &str) -> bool {
         if self.filter.is_empty() {
             return true;
@@ -80,14 +124,19 @@ impl StatefulWidget for TestList<'_> {
                 class_full_name.clone()
             };
 
-            // Class header with collapse indicator
+            // Get aggregate status for the class
+            let class_status = self.class_status(class);
+            let (status_symbol, status_style) = self.status_symbol(&class_status);
+
+            // Class header with collapse indicator and status
             let collapse_indicator = if is_collapsed { "+" } else { "-" };
             let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name)).count();
             let class_line = Line::from(vec![
                 Span::styled(
                     format!("{} ", collapse_indicator),
-                    Style::default().fg(self.theme.highlight),
+                    Style::default().fg(self.theme.border),
                 ),
+                Span::styled(format!("{} ", status_symbol), status_style),
                 Span::styled(
                     display_name,
                     Style::default()

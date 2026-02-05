@@ -111,11 +111,10 @@ impl TestExecutor {
             if let Some(stdout) = child.stdout.take() {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines().map_while(|l| l.ok()) {
-                    if should_show_line(&line) {
-                        if tx.send(ExecutorEvent::OutputLine(line)).is_err() {
+                    if should_show_line(&line)
+                        && tx.send(ExecutorEvent::OutputLine(line)).is_err() {
                             return;
                         }
-                    }
                 }
             }
 

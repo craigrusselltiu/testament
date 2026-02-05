@@ -192,7 +192,7 @@ fn glob_cs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> R
             if dir_name != "obj" && dir_name != "bin" && !dir_name.starts_with('.') {
                 glob_cs_files_recursive(&path, files)?;
             }
-        } else if path.extension().map_or(false, |ext| ext == "cs") {
+        } else if path.extension().is_some_and(|ext| ext == "cs") {
             files.push(path);
         }
     }

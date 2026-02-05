@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v0.4.0 - 2026-02-05
+
+### Added
+- **Test Result panel** - New panel showing details of the currently selected test:
+  - Test name, status (PASSED/FAILED/SKIPPED/RUNNING/NOT RUN), and duration
+  - Error message and stack trace for failed tests (scrollable)
+  - Updates in real-time as you navigate between tests
+  - Shows "No test selected." when no test is highlighted
+- Four-pane layout: Projects | Tests | Output (50%) / Test Result (50%)
+- Tab navigation now cycles through all four panes: Projects -> Tests -> Output -> TestResult -> Projects
+- Arrow key scrolling in Test Result pane when focused
+- `R` (Shift+R) keybinding to run all tests in the project
+- Left/Right arrow keys jump to previous/next test group (class)
+- Test group status indicators showing aggregate pass/fail status for each class
+
+### Changed
+- Right panel split into Output (top 50%) and Test Result (bottom 50%)
+- Groups in Tests pane now start collapsed by default
+- Collapse icons changed from v/> to +/- for better visibility
+- Status indicator shows "Discovering tests..." instead of "Discovering..."
+- Empty class names display as "Uncategorized"
+- `r` now runs the test under cursor (or class tests if class selected, or selected tests if any are multi-selected)
+- TRX parser now captures error messages and stack traces from failed tests
+
+### Fixed
+- Auto-scroll in output pane now waits for actual panel dimensions before scrolling
+- Discovery reliability improved with --no-build fallback to avoid parallel build conflicts
+
 ## v0.3.5 - 2026-02-05
 
 ### Changed
