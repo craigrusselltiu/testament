@@ -24,6 +24,9 @@ pub enum DiscoveryEvent {
 /// If `start` is a directory, searches only that directory (non-recursively) for .sln files first,
 /// then .csproj files.
 pub fn find_solution(start: &Path) -> Result<PathBuf> {
+    // Canonicalize the path to resolve ./ and normalize separators
+    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    
     // If start is a file, check if it's a valid solution/project file
     if start.is_file() {
         if let Some(ext) = start.extension() {
@@ -36,7 +39,7 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
 
     // If start is a directory, search only in that directory (non-recursively)
     if start.is_dir() {
-        let entries: Vec<_> = std::fs::read_dir(start)
+        let entries: Vec<_> = std::fs::read_dir(&start)
             .map_err(|e| TestamentError::FileRead {
                 path: start.to_path_buf(),
                 source: e,
@@ -519,7 +522,9 @@ mod tests {
         fs::write(&sln_path, "").unwrap();
 
         let result = find_solution(temp_dir.path()).unwrap();
-        assert_eq!(result, sln_path);
+        // Compare file names since canonicalize may add UNC prefix on Windows
+        assert_eq!(result.file_name(), sln_path.file_name());
+        assert!(result.exists());
     }
 
     #[test]
