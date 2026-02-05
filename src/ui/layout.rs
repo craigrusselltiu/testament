@@ -165,17 +165,23 @@ impl AppState {
         }
         
         // Account for line wrapping by calculating actual rendered lines
-        let content_width = self.output_width.saturating_sub(2) as usize; // subtract borders
+        // Use inner width (subtract 2 for borders)
+        let content_width = self.output_width.saturating_sub(2) as usize;
         let wrapped_lines: u16 = self.output.lines().map(|line| {
             if content_width == 0 || line.is_empty() {
                 1
             } else {
-                line.len().div_ceil(content_width) as u16
+                // Use unicode width for accurate character counting
+                let line_width: usize = line.chars().map(|c| {
+                    if c.is_ascii() { 1 } else { 2 }  // Wide chars take 2 cells
+                }).sum();
+                line_width.div_ceil(content_width).max(1) as u16
             }
         }).sum();
         
-        // Only scroll if content exceeds visible area
-        if wrapped_lines > self.output_visible_lines {
+        // Only scroll if content exceeds visible area (add small buffer to avoid early scrolling)
+        let threshold = self.output_visible_lines.saturating_add(2);
+        if wrapped_lines > threshold {
             self.output_scroll = wrapped_lines.saturating_sub(self.output_visible_lines);
         } else {
             self.output_scroll = 0;
