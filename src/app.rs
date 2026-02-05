@@ -230,6 +230,13 @@ pub fn run(
                     }
                     KeyCode::Char('r') => {
                         if executor_rx.is_none() {
+                            // Check if a class is selected in the Tests pane
+                            if state.active_pane == Pane::Tests {
+                                if let Some(class_tests) = get_selected_class_tests(&state) {
+                                    run_class_tests(&mut state, &mut executor_rx, class_tests);
+                                    continue;
+                                }
+                            }
                             run_tests(&mut state, &mut executor_rx);
                         }
                     }
@@ -498,5 +505,63 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
                 }
             }
         }
+    }
+}
+
+/// Get the tests for the currently selected class, if a class is selected.
+fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
+    let project_idx = state.project_state.selected()?;
+    let project = state.projects.get(project_idx)?;
+    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter);
+    let selected_idx = state.test_state.selected()?;
+    let item = items.get(selected_idx)?;
+
+    if let TestListItem::Class(class_name) = item {
+        // Find the class and collect all its test full names
+        for class in &project.classes {
+            if class.name == *class_name {
+                let tests: Vec<String> = class.tests.iter().map(|t| t.full_name.clone()).collect();
+                if !tests.is_empty() {
+                    return Some(tests);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Run tests for a specific class.
+fn run_class_tests(
+    state: &mut AppState,
+    executor_rx: &mut Option<std::sync::mpsc::Receiver<ExecutorEvent>>,
+    tests: Vec<String>,
+) {
+    if let Some(idx) = state.project_state.selected() {
+        let path = if let Some(project) = state.projects.get(idx) {
+            project.path.clone()
+        } else {
+            return;
+        };
+
+        let test_count = tests.len();
+
+        // Mark these tests as running
+        if let Some(project) = state.projects.get_mut(idx) {
+            for class in &mut project.classes {
+                for test in &mut class.tests {
+                    if tests.contains(&test.full_name) {
+                        test.status = TestStatus::Running;
+                    }
+                }
+            }
+        }
+
+        state.append_output("\n────────────────────────────\n");
+        state.append_output(&format!("Running {} tests in class...\n", test_count));
+        state.test_progress = Some((0, test_count));
+
+        let executor = TestExecutor::new(&path);
+        *executor_rx = Some(executor.run(Some(tests)));
     }
 }

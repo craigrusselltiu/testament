@@ -74,7 +74,7 @@ impl StatefulWidget for TestList<'_> {
             }
 
             // Class header with collapse indicator
-            let collapse_indicator = if is_collapsed { ">" } else { "v" };
+            let collapse_indicator = if is_collapsed { "+" } else { "-" };
             let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name)).count();
             let class_line = Line::from(vec![
                 Span::styled(
