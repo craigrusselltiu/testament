@@ -120,6 +120,7 @@ pub struct AppState {
     pub discovering: bool,
     pub status: String,
     pub context: Option<String>,
+    pub running_project_idx: Option<usize>, // Track which project tests are running for
     // Cached values for performance
     cached_output_lines: Option<(u16, usize)>, // (total_lines, output_len) - invalidated when output changes
 }
@@ -153,6 +154,7 @@ impl AppState {
             discovering: false,
             status: "Ready".to_string(),
             context: None,
+            running_project_idx: None,
             cached_output_lines: None,
         }
     }

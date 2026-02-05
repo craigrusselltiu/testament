@@ -476,6 +476,9 @@ fn run_tests(
             return;
         };
 
+        // Store which project we're running tests for
+        state.running_project_idx = Some(idx);
+
         // Determine which tests to run:
         // 1. If tests are selected, run only selected tests
         // 2. Else if filter is active, run only filtered tests
@@ -535,6 +538,9 @@ fn run_failed_tests(
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
             let path = project.path.clone();
+
+            // Store which project we're running tests for
+            state.running_project_idx = Some(idx);
 
             // Mark failed tests as running
             let failed_count = state.last_failed.len();
@@ -622,7 +628,9 @@ fn mark_filtered_tests_running(state: &mut AppState, filtered_tests: &[String]) 
 }
 
 fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
-    if let Some(idx) = state.project_state.selected() {
+    // Use running_project_idx to update the correct project, not the currently selected one
+    let idx = state.running_project_idx.or(state.project_state.selected());
+    if let Some(idx) = idx {
         if let Some(project) = state.projects.get_mut(idx) {
             for class in &mut project.classes {
                 for test in &mut class.tests {
@@ -642,6 +650,8 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
             }
         }
     }
+    // Clear running project index after applying results
+    state.running_project_idx = None;
 }
 
 /// Get the tests for the currently selected class, if a class is selected.
@@ -694,6 +704,9 @@ fn run_class_tests(
         } else {
             return;
         };
+
+        // Store which project we're running tests for
+        state.running_project_idx = Some(idx);
 
         let test_count = tests.len();
 
