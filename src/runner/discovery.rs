@@ -216,18 +216,7 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
         .output()
         .map_err(|e| TestamentError::DotnetExecution(format!("Failed to spawn: {}", e)))?;
 
-    // If --no-build failed, try again with build
-    let output = if !output.status.success() {
-        Command::new("dotnet")
-            .args(["test", "--list-tests"])
-            .arg(project_path)
-            .current_dir(project_dir)
-            .output()
-            .map_err(|e| TestamentError::DotnetExecution(format!("Failed to spawn: {}", e)))?
-    } else {
-        output
-    };
-
+    // Don't build on discovery - only use --no-build result
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
