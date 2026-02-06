@@ -153,16 +153,17 @@ fn node_text(node: &Node, source: &[u8]) -> String {
 }
 
 /// Build a map from method name to full qualified name by parsing C# files in a directory.
-pub fn build_test_name_map(project_dir: &Path) -> HashMap<String, TestMethodInfo> {
-    let mut map = HashMap::new();
+/// Each key maps to a Vec to handle methods with the same name in different classes.
+/// Entries are indexed by both full qualified name and bare method name.
+pub fn build_test_name_map(project_dir: &Path) -> HashMap<String, Vec<TestMethodInfo>> {
+    let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
 
-    // Find all .cs files recursively
     if let Ok(entries) = glob_cs_files(project_dir) {
         for path in entries {
             if let Ok(methods) = parse_test_file(&path) {
                 for method in methods {
-                    // Use method name as key (may have collisions, but that's ok)
-                    map.insert(method.method_name.clone(), method);
+                    map.entry(method.full_name()).or_default().push(method.clone());
+                    map.entry(method.method_name.clone()).or_default().push(method);
                 }
             }
         }

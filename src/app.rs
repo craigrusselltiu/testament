@@ -158,6 +158,7 @@ pub fn run_with_preselected(
                         } else {
                             state.append_output("\nBuild FAILED");
                         }
+                        state.status = "Ready".to_string();
                         executor_rx = None;
                         break;
                     }
@@ -195,11 +196,13 @@ pub fn run_with_preselected(
                         state.append_output(&summary);
 
                         state.test_progress = None;
+                        state.status = "Ready".to_string();
                         executor_rx = None;
                         break;
                     }
                     ExecutorEvent::Error(e) => {
                         state.append_output(&format!("\nError: {}", e));
+                        state.status = "Ready".to_string();
                         executor_rx = None;
                         break;
                     }
@@ -507,6 +510,7 @@ fn run_tests(
         state.append_output("\n────────────────────────────\n");
         state.append_output("Running tests...");
         state.test_progress = Some((0, total_tests));
+        state.status = "Running tests...".to_string();
 
         let executor = TestExecutor::new(&path);
         *executor_rx = Some(executor.run(tests_to_run));
@@ -524,6 +528,7 @@ fn build_project(
             state.output_auto_scroll = true;
             state.append_output("\n────────────────────────────\n");
             state.append_output("Building...\n");
+            state.status = "Building...".to_string();
 
             let executor = TestExecutor::new(&path);
             *executor_rx = Some(executor.build());
@@ -548,7 +553,9 @@ fn run_failed_tests(
                 for class in &mut project.classes {
                     for test in &mut class.tests {
                         if state.last_failed.contains(&test.full_name)
-                            || state.last_failed.iter().any(|f| f.ends_with(&test.name))
+                            || state.last_failed.iter().any(|f| {
+                                f.ends_with(&format!(".{}", test.full_name))
+                            })
                         {
                             test.status = TestStatus::Running;
                         }
@@ -560,6 +567,7 @@ fn run_failed_tests(
             state.append_output("\n────────────────────────────\n");
             state.append_output(&format!("Re-running {} failed...\n", failed_count));
             state.test_progress = Some((0, failed_count));
+            state.status = "Running tests...".to_string();
 
             let executor = TestExecutor::new(&path);
             let filter: Vec<String> = state.last_failed.iter().cloned().collect();
@@ -632,12 +640,19 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
     let idx = state.running_project_idx.or(state.project_state.selected());
     if let Some(idx) = idx {
         if let Some(project) = state.projects.get_mut(idx) {
+            // Track which results have been consumed to prevent one result
+            // matching multiple tests (e.g., same method name in different classes)
+            let mut consumed = vec![false; results.len()];
+
+            // Pass 1: precise full_name matching
             for class in &mut project.classes {
                 for test in &mut class.tests {
-                    // Find matching result by test name
-                    if let Some(result) = results.iter().find(|r| {
-                        r.test_name == test.full_name || r.test_name.ends_with(&test.name)
+                    if let Some((i, result)) = results.iter().enumerate().find(|(i, r)| {
+                        !consumed[*i]
+                            && (r.test_name == test.full_name
+                                || r.test_name.ends_with(&format!(".{}", test.full_name)))
                     }) {
+                        consumed[i] = true;
                         test.status = match result.outcome {
                             TestOutcome::Passed => TestStatus::Passed,
                             TestOutcome::Failed => TestStatus::Failed,
@@ -645,6 +660,26 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
                         };
                         test.duration_ms = Some(result.duration_ms);
                         test.error_message = result.error_message.clone();
+                    }
+                }
+            }
+
+            // Pass 2: bare name fallback for remaining unmatched tests/results
+            for class in &mut project.classes {
+                for test in &mut class.tests {
+                    if test.status == TestStatus::Running {
+                        if let Some((i, result)) = results.iter().enumerate().find(|(i, r)| {
+                            !consumed[*i] && r.test_name == test.name
+                        }) {
+                            consumed[i] = true;
+                            test.status = match result.outcome {
+                                TestOutcome::Passed => TestStatus::Passed,
+                                TestOutcome::Failed => TestStatus::Failed,
+                                TestOutcome::Skipped => TestStatus::Skipped,
+                            };
+                            test.duration_ms = Some(result.duration_ms);
+                            test.error_message = result.error_message.clone();
+                        }
                     }
                 }
             }
@@ -725,6 +760,7 @@ fn run_class_tests(
         state.append_output("\n────────────────────────────\n");
         state.append_output(&format!("Running {} test(s)...\n", test_count));
         state.test_progress = Some((0, test_count));
+        state.status = "Running tests...".to_string();
 
         let executor = TestExecutor::new(&path);
         *executor_rx = Some(executor.run(Some(tests)));

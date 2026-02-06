@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.0.1 - 2026-02-06
+
+### Fixed
+- **Test class grouping with duplicate method names** - Tests with the same method name in different classes (e.g., `ShouldInitialise` in both `ClassA` and `ClassB`) are now correctly grouped into their respective classes. Previously, all tests were grouped under whichever class was parsed last due to a HashMap key collision in `build_test_name_map`.
+- **Class-level test run result leaking** - Running tests for a single class no longer incorrectly applies results to other classes that share method names. Result matching now uses a two-pass approach with consumed-result tracking to prevent one TRX result from matching multiple tests.
+- **Re-run failed tests matching** - Re-running failed tests no longer incorrectly marks tests in other classes as running when they share method names.
+
+### Added
+- Status bar now shows "Running tests..." or "Building..." in the bottom right during execution, returning to "Ready" on completion.
+
 ## v1.0.0 - 2026-02-05
 
 Official release.

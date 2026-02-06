@@ -325,15 +325,21 @@ fn save_cache(project_path: &Path, tests: &[String]) {
 /// Group test names by their class using C# source parsing info.
 fn group_tests_by_class(
     test_names: Vec<String>,
-    name_map: &std::collections::HashMap<String, crate::parser::TestMethodInfo>,
+    name_map: &std::collections::HashMap<String, Vec<crate::parser::TestMethodInfo>>,
 ) -> Vec<TestClass> {
     use std::collections::HashMap;
 
     let mut classes: HashMap<String, Vec<Test>> = HashMap::new();
+    // Track usage index per key to cycle through entries for duplicate method names
+    let mut used_counts: HashMap<String, usize> = HashMap::new();
 
     for method_name in test_names {
         // Look up the method in our parsed C# info
-        let (full_name, class_full_name) = if let Some(info) = name_map.get(&method_name) {
+        let (full_name, class_full_name) = if let Some(infos) = name_map.get(&method_name) {
+            let idx = used_counts.entry(method_name.clone()).or_insert(0);
+            let info = &infos[(*idx) % infos.len()];
+            *idx += 1;
+
             let full = info.full_name();
             let class_full = if info.namespace.is_empty() {
                 info.class_name.clone()
@@ -436,18 +442,17 @@ mod tests {
 
     #[test]
     fn test_group_tests_empty_list() {
-        let map = HashMap::new();
+        let map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
         let result = group_tests_by_class(vec![], &map);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_group_tests_single_test_with_map() {
-        let mut map = HashMap::new();
-        map.insert(
-            "TestMethod".to_string(),
-            make_test_info("TestMethod", "MyClass", "MyNamespace"),
-        );
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        map.entry("TestMethod".to_string())
+            .or_default()
+            .push(make_test_info("TestMethod", "MyClass", "MyNamespace"));
 
         let tests = vec!["TestMethod".to_string()];
         let result = group_tests_by_class(tests, &map);
@@ -463,10 +468,10 @@ mod tests {
 
     #[test]
     fn test_group_tests_multiple_tests_same_class_with_map() {
-        let mut map = HashMap::new();
-        map.insert("Test1".to_string(), make_test_info("Test1", "MyClass", "NS"));
-        map.insert("Test2".to_string(), make_test_info("Test2", "MyClass", "NS"));
-        map.insert("Test3".to_string(), make_test_info("Test3", "MyClass", "NS"));
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        map.entry("Test1".to_string()).or_default().push(make_test_info("Test1", "MyClass", "NS"));
+        map.entry("Test2".to_string()).or_default().push(make_test_info("Test2", "MyClass", "NS"));
+        map.entry("Test3".to_string()).or_default().push(make_test_info("Test3", "MyClass", "NS"));
 
         let tests = vec!["Test1".to_string(), "Test2".to_string(), "Test3".to_string()];
         let result = group_tests_by_class(tests, &map);
@@ -480,10 +485,10 @@ mod tests {
 
     #[test]
     fn test_group_tests_multiple_classes_with_map() {
-        let mut map = HashMap::new();
-        map.insert("Test1".to_string(), make_test_info("Test1", "ClassA", "NS"));
-        map.insert("Test2".to_string(), make_test_info("Test2", "ClassB", "NS"));
-        map.insert("Test3".to_string(), make_test_info("Test3", "ClassA", "NS"));
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        map.entry("Test1".to_string()).or_default().push(make_test_info("Test1", "ClassA", "NS"));
+        map.entry("Test2".to_string()).or_default().push(make_test_info("Test2", "ClassB", "NS"));
+        map.entry("Test3".to_string()).or_default().push(make_test_info("Test3", "ClassA", "NS"));
 
         let tests = vec!["Test1".to_string(), "Test2".to_string(), "Test3".to_string()];
         let result = group_tests_by_class(tests, &map);
@@ -499,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_group_tests_fallback_when_not_in_map() {
-        let map = HashMap::new(); // Empty map
+        let map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
 
         let tests = vec!["TestMethod".to_string()];
         let result = group_tests_by_class(tests, &map);
@@ -515,8 +520,10 @@ mod tests {
 
     #[test]
     fn test_group_tests_mixed_found_and_not_found() {
-        let mut map = HashMap::new();
-        map.insert("Test1".to_string(), make_test_info("Test1", "MyClass", "NS"));
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        map.entry("Test1".to_string())
+            .or_default()
+            .push(make_test_info("Test1", "MyClass", "NS"));
 
         let tests = vec!["Test1".to_string(), "UnknownTest".to_string()];
         let result = group_tests_by_class(tests, &map);
@@ -531,6 +538,33 @@ mod tests {
         let unknown_class = result.iter().find(|c| c.name.is_empty()).unwrap();
         assert_eq!(unknown_class.tests.len(), 1);
         assert_eq!(unknown_class.tests[0].name, "UnknownTest");
+    }
+
+    #[test]
+    fn test_group_tests_same_method_name_different_classes() {
+        // Simulates the bug: two classes with identically-named methods
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        map.entry("ShouldInit".to_string()).or_default().push(make_test_info("ShouldInit", "ClassA", "NS"));
+        map.entry("ShouldInit".to_string()).or_default().push(make_test_info("ShouldInit", "ClassB", "NS"));
+        map.entry("ShouldSave".to_string()).or_default().push(make_test_info("ShouldSave", "ClassA", "NS"));
+        map.entry("ShouldSave".to_string()).or_default().push(make_test_info("ShouldSave", "ClassB", "NS"));
+
+        // dotnet test --list-tests returns each method name twice (once per class)
+        let tests = vec![
+            "ShouldInit".to_string(),
+            "ShouldInit".to_string(),
+            "ShouldSave".to_string(),
+            "ShouldSave".to_string(),
+        ];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 2);
+
+        let class_a = result.iter().find(|c| c.name == "ClassA").unwrap();
+        assert_eq!(class_a.tests.len(), 2);
+
+        let class_b = result.iter().find(|c| c.name == "ClassB").unwrap();
+        assert_eq!(class_b.tests.len(), 2);
     }
 
     // find_solution tests
