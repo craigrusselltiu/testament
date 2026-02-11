@@ -10,6 +10,7 @@ pub enum TestStatus {
 #[derive(Debug, Clone)]
 pub struct Test {
     pub name: String,
+    pub name_lower: String,
     pub full_name: String,
     pub status: TestStatus,
     pub duration_ms: Option<u64>,
@@ -18,8 +19,10 @@ pub struct Test {
 
 impl Test {
     pub fn new(name: String, full_name: String) -> Self {
+        let name_lower = name.to_lowercase();
         Self {
             name,
+            name_lower,
             full_name,
             status: TestStatus::NotRun,
             duration_ms: None,

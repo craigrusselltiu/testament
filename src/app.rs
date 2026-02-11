@@ -55,11 +55,10 @@ pub fn run_with_preselected(
 
     // Main loop
     loop {
-        terminal.draw(|f| ui::draw(f, &mut state))?;
-
         // Check for discovery events (background test discovery)
         if state.discovering {
             while let Ok(event) = discovery_rx.try_recv() {
+                state.dirty = true;
                 match event {
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
                         // Filter to only preselected tests if in PR mode
@@ -118,6 +117,7 @@ pub fn run_with_preselected(
                                 state.append_output(&format!("\n[PR] Loaded {} changed test(s).", count));
                                 // Expand all classes to show selected tests
                                 state.collapsed_classes.clear();
+                                state.invalidate_test_items();
                             }
                         }
                     }
@@ -129,6 +129,7 @@ pub fn run_with_preselected(
         if state.watch_mode {
             if let Some(ref watcher) = file_watcher {
                 if watcher.try_recv() && executor_rx.is_none() {
+                    state.dirty = true;
                     state.append_output("\n[Watch] File change detected, running tests...\n");
                     run_tests(&mut state, &mut executor_rx);
                 }
@@ -138,6 +139,7 @@ pub fn run_with_preselected(
         // Check for executor events
         if let Some(ref rx) = executor_rx {
             while let Ok(event) = rx.try_recv() {
+                state.dirty = true;
                 match event {
                     ExecutorEvent::OutputLine(line) => {
                         let trimmed = line.trim();
@@ -208,165 +210,182 @@ pub fn run_with_preselected(
             }
         }
 
-        // Poll for keyboard input with timeout
-        if event::poll(Duration::from_millis(33))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        // Only redraw when state has changed
+        if state.dirty {
+            terminal.draw(|f| ui::draw(f, &mut state))?;
+            state.dirty = false;
+        }
 
-                // Handle filter mode input
-                if state.filter_active {
+        // Dynamic timeout: fast when active operations are running, slow when idle
+        let poll_timeout = if state.discovering || executor_rx.is_some() {
+            Duration::from_millis(33)
+        } else {
+            Duration::from_millis(250)
+        };
+
+        // Poll for keyboard input with timeout
+        if event::poll(poll_timeout)? {
+            match event::read()? {
+                Event::Resize(_, _) => {
+                    state.dirty = true;
+                }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    state.dirty = true;
+
+                    // Handle filter mode input
+                    if state.filter_active {
+                        match key.code {
+                            KeyCode::Esc => {
+                                state.filter_active = false;
+                            }
+                            KeyCode::Enter => {
+                                state.filter_active = false;
+                            }
+                            KeyCode::Backspace => {
+                                state.filter.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                state.filter.push(c);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Down => {
+                            move_selection(&mut state, 1);
+                        }
+                        KeyCode::Up => {
+                            move_selection(&mut state, -1);
+                        }
+                        KeyCode::Left => {
+                            move_to_prev_group(&mut state);
+                        }
+                        KeyCode::Right => {
+                            move_to_next_group(&mut state);
+                        }
+                        KeyCode::Tab => {
+                            state.active_pane = match state.active_pane {
+                                Pane::Projects => Pane::Tests,
+                                Pane::Tests => Pane::Output,
+                                Pane::Output => Pane::TestResult,
+                                Pane::TestResult => Pane::Projects,
+                            };
+                        }
+                        KeyCode::BackTab => {
+                            state.active_pane = match state.active_pane {
+                                Pane::Projects => Pane::TestResult,
+                                Pane::Tests => Pane::Projects,
+                                Pane::Output => Pane::Tests,
+                                Pane::TestResult => Pane::Output,
+                            };
+                        }
+                        KeyCode::Char(' ') => {
+                            if state.active_pane == Pane::Tests {
+                                toggle_space_action(&mut state);
+                            }
+                        }
+                        KeyCode::Char('x') => {
+                            state.clear_output();
+                            state.test_progress = None;
+                        }
+                        KeyCode::Char('c') => {
+                            // Expand/collapse all classes in current project
+                            if let Some(idx) = state.project_state.selected() {
+                                if let Some(project) = state.projects.get(idx) {
+                                    let project_name = project.name.clone();
+                                    let class_full_names: Vec<String> = project.classes.iter()
+                                        .map(|c| c.full_name.clone())
+                                        .collect();
+                                    state.toggle_expand_collapse_all(&project_name, &class_full_names);
+                                }
+                            }
+                        }
+                        KeyCode::Char('C') => {
+                            // Clear test selections
+                            state.clear_selection();
+                        }
+                        KeyCode::Char('/') => {
+                            state.filter_active = true;
+                            state.filter.clear();
+                        }
                         KeyCode::Esc => {
-                            state.filter_active = false;
+                            if !state.filter.is_empty() {
+                                state.filter.clear();
+                            }
                         }
-                        KeyCode::Enter => {
-                            state.filter_active = false;
+                        KeyCode::Char('w') => {
+                            state.watch_mode = !state.watch_mode;
+                            if state.watch_mode {
+                                match FileWatcher::new(&solution_dir) {
+                                    Ok(watcher) => {
+                                        file_watcher = Some(watcher);
+                                        state.append_output("\n[Watch] Watch mode enabled\n");
+                                    }
+                                    Err(e) => {
+                                        state.watch_mode = false;
+                                        state.append_output(&format!(
+                                            "\n[Watch] Failed to enable watch mode: {}\n",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                file_watcher = None;
+                                state.append_output("\n[Watch] Watch mode disabled\n");
+                            }
                         }
-                        KeyCode::Backspace => {
-                            state.filter.pop();
+                        KeyCode::Char('r') => {
+                            if executor_rx.is_none() {
+                                // If tests are multi-selected, run those
+                                if !state.selected_tests.is_empty() {
+                                    run_tests(&mut state, &mut executor_rx);
+                                    continue;
+                                }
+
+                                // If in Tests pane, check what's under cursor
+                                if state.active_pane == Pane::Tests {
+                                    // Check if a class is selected - run all tests in that class
+                                    if let Some(class_tests) = get_selected_class_tests(&mut state) {
+                                        run_class_tests(&mut state, &mut executor_rx, class_tests);
+                                        continue;
+                                    }
+
+                                    // Check if a single test is selected - run just that test
+                                    if let Some(test_name) = get_selected_single_test(&mut state) {
+                                        run_class_tests(&mut state, &mut executor_rx, vec![test_name]);
+                                        continue;
+                                    }
+                                }
+
+                                // Fallback: run all tests in project
+                                run_tests(&mut state, &mut executor_rx);
+                            }
                         }
-                        KeyCode::Char(c) => {
-                            state.filter.push(c);
+                        KeyCode::Char('R') => {
+                            // Shift+R: always run all tests in the project
+                            if executor_rx.is_none() {
+                                // Clear selection to run all tests
+                                state.selected_tests.clear();
+                                run_tests(&mut state, &mut executor_rx);
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if executor_rx.is_none() {
+                                build_project(&mut state, &mut executor_rx);
+                            }
+                        }
+                        KeyCode::Char('a') => {
+                            if executor_rx.is_none() && !state.last_failed.is_empty() {
+                                run_failed_tests(&mut state, &mut executor_rx);
+                            }
                         }
                         _ => {}
                     }
-                    continue;
                 }
-
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Down => {
-                        move_selection(&mut state, 1);
-                    }
-                    KeyCode::Up => {
-                        move_selection(&mut state, -1);
-                    }
-                    KeyCode::Left => {
-                        move_to_prev_group(&mut state);
-                    }
-                    KeyCode::Right => {
-                        move_to_next_group(&mut state);
-                    }
-                    KeyCode::Tab => {
-                        state.active_pane = match state.active_pane {
-                            Pane::Projects => Pane::Tests,
-                            Pane::Tests => Pane::Output,
-                            Pane::Output => Pane::TestResult,
-                            Pane::TestResult => Pane::Projects,
-                        };
-                    }
-                    KeyCode::BackTab => {
-                        state.active_pane = match state.active_pane {
-                            Pane::Projects => Pane::TestResult,
-                            Pane::Tests => Pane::Projects,
-                            Pane::Output => Pane::Tests,
-                            Pane::TestResult => Pane::Output,
-                        };
-                    }
-                    KeyCode::Char(' ') => {
-                        if state.active_pane == Pane::Tests {
-                            toggle_space_action(&mut state);
-                        }
-                    }
-                    KeyCode::Char('x') => {
-                        state.clear_output();
-                        state.test_progress = None;
-                    }
-                    KeyCode::Char('c') => {
-                        // Expand/collapse all classes in current project
-                        if let Some(idx) = state.project_state.selected() {
-                            if let Some(project) = state.projects.get(idx) {
-                                let project_name = project.name.clone();
-                                let class_full_names: Vec<String> = project.classes.iter()
-                                    .map(|c| c.full_name.clone())
-                                    .collect();
-                                state.toggle_expand_collapse_all(&project_name, &class_full_names);
-                            }
-                        }
-                    }
-                    KeyCode::Char('C') => {
-                        // Clear test selections
-                        state.clear_selection();
-                    }
-                    KeyCode::Char('/') => {
-                        state.filter_active = true;
-                        state.filter.clear();
-                    }
-                    KeyCode::Esc => {
-                        if !state.filter.is_empty() {
-                            state.filter.clear();
-                        }
-                    }
-                    KeyCode::Char('w') => {
-                        state.watch_mode = !state.watch_mode;
-                        if state.watch_mode {
-                            match FileWatcher::new(&solution_dir) {
-                                Ok(watcher) => {
-                                    file_watcher = Some(watcher);
-                                    state.append_output("\n[Watch] Watch mode enabled\n");
-                                }
-                                Err(e) => {
-                                    state.watch_mode = false;
-                                    state.append_output(&format!(
-                                        "\n[Watch] Failed to enable watch mode: {}\n",
-                                        e
-                                    ));
-                                }
-                            }
-                        } else {
-                            file_watcher = None;
-                            state.append_output("\n[Watch] Watch mode disabled\n");
-                        }
-                    }
-                    KeyCode::Char('r') => {
-                        if executor_rx.is_none() {
-                            // If tests are multi-selected, run those
-                            if !state.selected_tests.is_empty() {
-                                run_tests(&mut state, &mut executor_rx);
-                                continue;
-                            }
-                            
-                            // If in Tests pane, check what's under cursor
-                            if state.active_pane == Pane::Tests {
-                                // Check if a class is selected - run all tests in that class
-                                if let Some(class_tests) = get_selected_class_tests(&mut state) {
-                                    run_class_tests(&mut state, &mut executor_rx, class_tests);
-                                    continue;
-                                }
-
-                                // Check if a single test is selected - run just that test
-                                if let Some(test_name) = get_selected_single_test(&mut state) {
-                                    run_class_tests(&mut state, &mut executor_rx, vec![test_name]);
-                                    continue;
-                                }
-                            }
-                            
-                            // Fallback: run all tests in project
-                            run_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('R') => {
-                        // Shift+R: always run all tests in the project
-                        if executor_rx.is_none() {
-                            // Clear selection to run all tests
-                            state.selected_tests.clear();
-                            run_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('b') => {
-                        if executor_rx.is_none() {
-                            build_project(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('a') => {
-                        if executor_rx.is_none() && !state.last_failed.is_empty() {
-                            run_failed_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    _ => {}
-                }
+                _ => {}
             }
         }
     }
@@ -398,7 +417,7 @@ fn move_selection(state: &mut AppState, delta: i32) {
             state.test_state.select(Some(new));
         }
         Pane::Output => {
-            let line_count = state.output.lines().count() as i32;
+            let line_count = state.output_newline_count as i32;
             let current = state.output_scroll as i32;
             let new = (current + delta).max(0).min(line_count.saturating_sub(1));
             state.output_scroll = new as u16;
@@ -602,7 +621,7 @@ fn get_filtered_tests(state: &AppState) -> HashSet<String> {
         if let Some(project) = state.projects.get(idx) {
             for class in &project.classes {
                 for test in &class.tests {
-                    if test.name.to_lowercase().contains(&filter_lower) {
+                    if test.name_lower.contains(&filter_lower) {
                         tests.insert(test.full_name.clone());
                     }
                 }

@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ratatui::{
@@ -122,10 +121,13 @@ pub struct AppState {
     pub status: String,
     pub context: Option<String>,
     pub running_project_idx: Option<usize>, // Track which project tests are running for
+    pub dirty: bool, // Only redraw when state has changed
     // Cached values for performance
     cached_output_lines: Option<(u16, usize)>, // (total_lines, output_len) - invalidated when output changes
+    pub output_newline_count: usize, // Incremental newline count for O(1) scroll bounds
     cached_test_items: Vec<TestListItem>,
-    cached_test_items_key: Option<(usize, u64, String)>, // (project_idx, collapsed_hash, filter)
+    cached_test_items_key: Option<(usize, u64, String)>, // (project_idx, collapse_generation, filter)
+    collapse_generation: u64, // Incremented on collapse state changes, replaces expensive hash
 }
 
 impl AppState {
@@ -158,24 +160,56 @@ impl AppState {
             status: "Ready".to_string(),
             context: None,
             running_project_idx: None,
+            dirty: true, // Draw on first frame
             cached_output_lines: None,
+            output_newline_count: 0,
             cached_test_items: Vec::new(),
             cached_test_items_key: None,
+            collapse_generation: 0,
         }
     }
 
     pub fn append_output(&mut self, text: &str) {
         self.output.push_str(text);
-        self.cached_output_lines = None; // Invalidate cache
+        self.output_newline_count += text.bytes().filter(|&b| b == b'\n').count();
+        self.cached_output_lines = None;
+        self.dirty = true;
+
+        // Bound output buffer at 2000 lines, trim to 1000 when exceeded
+        const MAX_LINES: usize = 2000;
+        const TRIM_TO: usize = 1000;
+        if self.output_newline_count > MAX_LINES {
+            let skip = self.output_newline_count - TRIM_TO;
+            let mut newlines_found = 0;
+            let mut trim_pos = 0;
+            for (i, b) in self.output.bytes().enumerate() {
+                if b == b'\n' {
+                    newlines_found += 1;
+                    if newlines_found >= skip {
+                        trim_pos = i + 1;
+                        break;
+                    }
+                }
+            }
+            if trim_pos > 0 && trim_pos < self.output.len() {
+                self.output.replace_range(..trim_pos, "");
+                self.output_newline_count = TRIM_TO;
+                self.cached_output_lines = None;
+                self.output_scroll = 0;
+            }
+        }
+
         if self.output_auto_scroll {
             self.scroll_output_to_bottom();
         }
     }
-    
+
     pub fn clear_output(&mut self) {
         self.output.clear();
         self.output_scroll = 0;
-        self.cached_output_lines = None; // Invalidate cache
+        self.output_newline_count = 0;
+        self.cached_output_lines = None;
+        self.dirty = true;
     }
 
     /// Get total wrapped line count, using cache if valid
@@ -239,6 +273,8 @@ impl AppState {
         } else {
             self.collapsed_classes.insert(key);
         }
+        self.collapse_generation += 1;
+        self.dirty = true;
     }
 
     pub fn toggle_test_selected(&mut self, test_name: &str) {
@@ -247,34 +283,24 @@ impl AppState {
         } else {
             self.selected_tests.insert(test_name.to_string());
         }
+        self.dirty = true;
     }
 
     pub fn clear_selection(&mut self) {
         self.selected_tests.clear();
+        self.dirty = true;
     }
 
     /// Invalidate the cached test items (call when classes, collapsed state, or results change)
     pub fn invalidate_test_items(&mut self) {
         self.cached_test_items_key = None;
+        self.dirty = true;
     }
 
     /// Get the cached test items, rebuilding if needed
     pub fn get_test_items(&mut self) -> &[TestListItem] {
         let project_idx = self.project_state.selected().unwrap_or(usize::MAX);
-
-        // Build a hash of the collapsed_classes set for cache invalidation
-        let collapsed_hash = {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            // Sort keys for deterministic hashing
-            let mut keys: Vec<_> = self.collapsed_classes.iter().collect();
-            keys.sort();
-            for key in keys {
-                key.hash(&mut hasher);
-            }
-            hasher.finish()
-        };
-
-        let key = (project_idx, collapsed_hash, self.filter.clone());
+        let key = (project_idx, self.collapse_generation, self.filter.clone());
 
         let needs_rebuild = self.cached_test_items_key.as_ref() != Some(&key);
 
@@ -315,6 +341,8 @@ impl AppState {
                 self.collapsed_classes.insert(key);
             }
         }
+        self.collapse_generation += 1;
+        self.dirty = true;
     }
 }
 

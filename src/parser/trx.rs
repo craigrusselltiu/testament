@@ -173,9 +173,14 @@ fn parse_duration(s: &str) -> u64 {
     let secs_parts: Vec<&str> = parts[2].split('.').collect();
     let seconds: u64 = secs_parts[0].parse().unwrap_or(0);
     let millis: u64 = if secs_parts.len() > 1 {
-        let frac = secs_parts[1];
-        let frac_padded = format!("{:0<7}", frac);
-        frac_padded[..3].parse().unwrap_or(0)
+        let frac = secs_parts[1].as_bytes();
+        let digit = |i: usize| -> u64 {
+            frac.get(i)
+                .filter(|b| b.is_ascii_digit())
+                .map(|b| (b - b'0') as u64)
+                .unwrap_or(0)
+        };
+        digit(0) * 100 + digit(1) * 10 + digit(2)
     } else {
         0
     };

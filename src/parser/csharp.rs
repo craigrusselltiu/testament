@@ -20,22 +20,20 @@ impl TestMethodInfo {
     }
 }
 
-/// Parse a C# file and extract test methods with their class and namespace info.
-pub fn parse_test_file(path: &Path) -> Result<Vec<TestMethodInfo>, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-
-    parse_test_content(&content)
-}
-
 /// Parse C# content and extract test methods.
-pub fn parse_test_content(content: &str) -> Result<Vec<TestMethodInfo>, String> {
+#[cfg(test)]
+fn parse_test_content(content: &str) -> Result<Vec<TestMethodInfo>, String> {
     let mut parser = Parser::new();
     let language = tree_sitter_c_sharp::LANGUAGE;
     parser
         .set_language(&language.into())
         .map_err(|e| format!("Failed to set language: {}", e))?;
 
+    parse_content_with_parser(&mut parser, content)
+}
+
+/// Parse C# content using an existing parser instance (avoids repeated parser creation).
+fn parse_content_with_parser(parser: &mut Parser, content: &str) -> Result<Vec<TestMethodInfo>, String> {
     let tree = parser
         .parse(content, None)
         .ok_or_else(|| "Failed to parse C# content".to_string())?;
@@ -158,12 +156,26 @@ fn node_text(node: &Node, source: &[u8]) -> String {
 pub fn build_test_name_map(project_dir: &Path) -> HashMap<String, Vec<TestMethodInfo>> {
     let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
 
+    // Create parser once and reuse for all files
+    let mut parser = Parser::new();
+    let language = tree_sitter_c_sharp::LANGUAGE;
+    if parser.set_language(&language.into()).is_err() {
+        return map;
+    }
+
     if let Ok(entries) = glob_cs_files(project_dir) {
         for path in entries {
-            if let Ok(methods) = parse_test_file(&path) {
-                for method in methods {
-                    map.entry(method.full_name()).or_default().push(method.clone());
-                    map.entry(method.method_name.clone()).or_default().push(method);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                // Light pre-filter: skip files that don't mention "Test" at all
+                if !content.contains("Test") {
+                    continue;
+                }
+
+                if let Ok(methods) = parse_content_with_parser(&mut parser, &content) {
+                    for method in methods {
+                        map.entry(method.full_name()).or_default().push(method.clone());
+                        map.entry(method.method_name.clone()).or_default().push(method);
+                    }
                 }
             }
         }
@@ -179,21 +191,18 @@ fn glob_cs_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> 
 }
 
 fn glob_cs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), std::io::Error> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        let ft = entry.file_type()?;
         let path = entry.path();
 
-        if path.is_dir() {
+        if ft.is_dir() {
             // Skip common non-source directories
             let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if dir_name != "obj" && dir_name != "bin" && !dir_name.starts_with('.') {
                 glob_cs_files_recursive(&path, files)?;
             }
-        } else if path.extension().is_some_and(|ext| ext == "cs") {
+        } else if ft.is_file() && path.extension().is_some_and(|ext| ext == "cs") {
             files.push(path);
         }
     }
