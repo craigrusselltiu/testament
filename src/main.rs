@@ -12,7 +12,7 @@ use std::process::Command;
 
 use cli::{Cli, Command as CliCommand};
 use git::{extract_changed_tests, fetch_pr_diff, get_github_token, parse_pr_url};
-use runner::{discover_projects_lazy, discover_projects_from_paths, find_solution};
+use runner::{discover_projects_lazy, discover_projects_from_paths, find_solution, find_csproj_in_dir};
 
 fn main() {
     let cli = Cli::parse_args();
@@ -26,28 +26,72 @@ fn main() {
     // Normal TUI mode
     let start_dir = cli.path.unwrap_or_else(|| env::current_dir().unwrap());
 
-    let sln_path = match find_solution(&start_dir) {
-        Ok(path) => path,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
+    let sln_path = find_solution(&start_dir).ok();
+
+    let (projects, discovery_rx) = if let Some(ref sln) = sln_path {
+        if sln.extension().is_some_and(|ext| ext == "sln") {
+            // Found .sln - parse it for test projects
+            match discover_projects_lazy(sln) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("Failed to discover projects: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            // find_solution returned a .csproj - find all csproj files in directory instead
+            let csproj_files = find_csproj_in_dir(&start_dir).unwrap_or_else(|_| vec![sln.clone()]);
+            match discover_projects_from_paths(csproj_files) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("Failed to discover projects: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    } else {
+        // find_solution failed - try recursive csproj search in directory
+        match find_csproj_in_dir(&start_dir) {
+            Ok(csproj_files) => match discover_projects_from_paths(csproj_files) {
+                Ok(result) => result,
+                Err(e) => {
+                    eprintln!("Failed to discover projects: {}", e);
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
     };
 
-    let (projects, discovery_rx) = match discover_projects_lazy(&sln_path) {
-        Ok(result) => result,
-        Err(e) => {
-            eprintln!("Failed to discover projects: {}", e);
-            std::process::exit(1);
+    let solution_dir = if let Some(ref sln) = sln_path {
+        if sln.extension().is_some_and(|ext| ext == "sln") {
+            sln.parent().unwrap_or(&start_dir).to_path_buf()
+        } else {
+            start_dir.clone()
         }
+    } else {
+        start_dir.clone()
     };
 
-    let solution_dir = sln_path.parent().unwrap_or(&start_dir).to_path_buf();
-    
     // Build context string from solution/project name
-    let context = sln_path.file_name()
-        .and_then(|n| n.to_str())
-        .map(|name| format!("Running Tests for Solution: {}", name));
+    let context = if let Some(ref sln) = sln_path {
+        if sln.extension().is_some_and(|ext| ext == "sln") {
+            sln.file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| format!("Running Tests for Solution: {}", name))
+        } else {
+            start_dir.file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| format!("Running Tests in: {}", name))
+        }
+    } else {
+        start_dir.file_name()
+            .and_then(|n| n.to_str())
+            .map(|name| format!("Running Tests in: {}", name))
+    };
 
     if let Err(e) = app::run(projects, solution_dir, discovery_rx, context) {
         eprintln!("Error: {}", e);

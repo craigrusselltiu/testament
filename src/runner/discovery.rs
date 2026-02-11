@@ -31,8 +31,9 @@ pub enum DiscoveryEvent {
 /// Find a .sln or .csproj file in the given path.
 ///
 /// If `start` is a file with .sln or .csproj extension, returns it directly.
-/// If `start` is a directory, searches only that directory (non-recursively) for .sln files first,
-/// then .csproj files.
+/// If `start` is a directory, searches that directory for .sln files first.
+/// If no .sln found, walks up parent directories looking for a .sln.
+/// Falls back to .csproj files in the original directory.
 pub fn find_solution(start: &Path) -> Result<PathBuf> {
     // Canonicalize the path to resolve ./ and normalize separators
     let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
@@ -49,26 +50,34 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
         return Err(TestamentError::NoSolutionFound);
     }
 
-    // If start is a directory, search only in that directory (non-recursively)
+    // If start is a directory, search for .sln files
     if start.is_dir() {
-        let entries: Vec<_> = std::fs::read_dir(&start)
+        // Search current directory and parent directories for .sln files,
+        // stopping at the git repository root
+        let mut search_dir = Some(start.as_path());
+        while let Some(dir) = search_dir {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.extension().is_some_and(|ext| ext == "sln") {
+                        return Ok(path);
+                    }
+                }
+            }
+            // Stop at git repo root to avoid finding unrelated solutions
+            if dir.join(".git").exists() {
+                break;
+            }
+            search_dir = dir.parent();
+        }
+
+        // No .sln found - fall back to .csproj in original directory
+        let entries = std::fs::read_dir(&start)
             .map_err(|e| TestamentError::FileRead {
                 path: start.to_path_buf(),
                 source: e,
-            })?
-            .filter_map(|e| e.ok())
-            .collect();
-
-        // First, look for .sln files
-        for entry in &entries {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "sln") {
-                return Ok(path);
-            }
-        }
-
-        // If no .sln found, look for .csproj files
-        for entry in &entries {
+            })?;
+        for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "csproj") {
                 return Ok(path);
@@ -77,6 +86,43 @@ pub fn find_solution(start: &Path) -> Result<PathBuf> {
     }
 
     Err(TestamentError::NoSolutionFound)
+}
+
+/// Find all .csproj files in a directory, searching recursively into subdirectories.
+/// Skips `bin`, `obj`, and hidden directories.
+pub fn find_csproj_in_dir(dir: &Path) -> Result<Vec<PathBuf>> {
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let dir = strip_unc_prefix(&dir);
+
+    let mut csproj_files = Vec::new();
+    find_csproj_recursive(&dir, &mut csproj_files);
+
+    if csproj_files.is_empty() {
+        Err(TestamentError::NoSolutionFound)
+    } else {
+        Ok(csproj_files)
+    }
+}
+
+fn find_csproj_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name == "bin" || name == "obj" || name.starts_with('.') {
+                    continue;
+                }
+            }
+            find_csproj_recursive(&path, results);
+        } else if path.extension().is_some_and(|ext| ext == "csproj") {
+            results.push(path);
+        }
+    }
 }
 
 /// Parse a .sln file to extract test project paths.
@@ -624,8 +670,26 @@ mod tests {
     }
 
     #[test]
+    fn test_find_solution_in_parent_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let sln_path = temp_dir.path().join("Test.sln");
+        fs::write(&sln_path, "").unwrap();
+
+        // Create a subdirectory with a .csproj but no .sln
+        let sub_dir = temp_dir.path().join("SubProject");
+        fs::create_dir_all(&sub_dir).unwrap();
+        fs::write(sub_dir.join("SubProject.csproj"), "").unwrap();
+
+        // Searching from the subdirectory should find the .sln in the parent
+        let result = find_solution(&sub_dir).unwrap();
+        assert_eq!(result.file_name(), sln_path.file_name());
+    }
+
+    #[test]
     fn test_find_solution_not_found() {
         let temp_dir = TempDir::new().unwrap();
+        // Create .git to stop parent traversal
+        fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
         let result = find_solution(temp_dir.path());
 
         assert!(result.is_err());
@@ -824,5 +888,99 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Incomplete
 
         let result = parse_solution(&sln_path).unwrap();
         assert!(result.is_empty());
+    }
+
+    // find_csproj_in_dir tests
+    #[test]
+    fn test_find_csproj_in_dir_single_file() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("MyProject.csproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].extension().unwrap() == "csproj");
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_multiple_files() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("ProjectA.csproj"), "").unwrap();
+        fs::write(temp_dir.path().join("ProjectB.csproj"), "").unwrap();
+        fs::write(temp_dir.path().join("ProjectC.csproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_ignores_non_csproj() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("MyProject.csproj"), "").unwrap();
+        fs::write(temp_dir.path().join("readme.md"), "").unwrap();
+        fs::write(temp_dir.path().join("MyProject.fsproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = find_csproj_in_dir(temp_dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_no_csproj_files() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("readme.md"), "").unwrap();
+        fs::write(temp_dir.path().join("Test.sln"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_recursive() {
+        let temp_dir = TempDir::new().unwrap();
+        let sub_a = temp_dir.path().join("ProjectA");
+        let sub_b = temp_dir.path().join("ProjectB");
+        fs::create_dir_all(&sub_a).unwrap();
+        fs::create_dir_all(&sub_b).unwrap();
+        fs::write(sub_a.join("ProjectA.csproj"), "").unwrap();
+        fs::write(sub_b.join("ProjectB.csproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_skips_bin_obj() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let bin = temp_dir.path().join("bin");
+        let obj = temp_dir.path().join("obj");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&obj).unwrap();
+        fs::write(src.join("Real.csproj"), "").unwrap();
+        fs::write(bin.join("Cached.csproj"), "").unwrap();
+        fs::write(obj.join("Generated.csproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(result[0].to_string_lossy().contains("Real"));
+    }
+
+    #[test]
+    fn test_find_csproj_in_dir_mixed_levels() {
+        let temp_dir = TempDir::new().unwrap();
+        let sub = temp_dir.path().join("SubDir");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(temp_dir.path().join("Root.csproj"), "").unwrap();
+        fs::write(sub.join("Nested.csproj"), "").unwrap();
+
+        let result = find_csproj_in_dir(temp_dir.path()).unwrap();
+        assert_eq!(result.len(), 2);
     }
 }

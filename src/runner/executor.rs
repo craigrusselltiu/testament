@@ -29,9 +29,11 @@ impl TestExecutor {
         let project_path = self.project_path.clone();
 
         thread::spawn(move || {
+            let project_dir = project_path.parent().unwrap_or(Path::new("."));
             let output = match Command::new("dotnet")
                 .args(["build", "--verbosity", "minimal"])
                 .arg(&project_path)
+                .current_dir(project_dir)
                 .output()
             {
                 Ok(output) => output,
@@ -65,6 +67,7 @@ impl TestExecutor {
         let project_path = self.project_path.clone();
 
         thread::spawn(move || {
+            let project_dir = project_path.parent().unwrap_or(Path::new("."));
             // Unique TRX path per run to avoid stale results from crashes
             let trx_path = std::env::temp_dir().join(format!(
                 "testament_{}_{}.trx",
@@ -105,6 +108,15 @@ impl TestExecutor {
             }
 
             cmd.arg(&project_path);
+            cmd.current_dir(project_dir);
+
+            // Log the command for diagnostics
+            let cmd_display = format!(
+                "dotnet test {} {}",
+                project_path.display(),
+                if cmd.get_args().any(|a| a.to_string_lossy().contains("--filter")) { "(with filter)" } else { "" }
+            );
+            let _ = tx.send(ExecutorEvent::OutputLine(format!("> {}", cmd_display)));
 
             let mut child = match cmd
                 .stdout(Stdio::piped())
@@ -130,7 +142,7 @@ impl TestExecutor {
             }
 
             // Wait for completion
-            let _ = child.wait();
+            let status = child.wait();
 
             // Parse TRX results
             match std::fs::read_to_string(&trx_path) {
@@ -142,8 +154,15 @@ impl TestExecutor {
                         let _ = tx.send(ExecutorEvent::Error(format!("TRX parse error: {}", e)));
                     }
                 },
-                Err(e) => {
-                    let _ = tx.send(ExecutorEvent::Error(format!("Failed to read TRX: {}", e)));
+                Err(_) => {
+                    // TRX file not created - dotnet test likely failed before producing results
+                    let mut msg = String::from("dotnet test did not produce results.");
+                    if let Ok(s) = &status {
+                        if !s.success() {
+                            msg.push_str(&format!(" Exit code: {}", s.code().unwrap_or(-1)));
+                        }
+                    }
+                    let _ = tx.send(ExecutorEvent::Error(msg));
                 }
             }
 

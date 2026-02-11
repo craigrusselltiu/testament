@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.1.0 - 2026-02-11
+
+### Added
+- **Directory parameter with recursive project discovery** - Pass a directory path to testament and it will recursively search for all `.csproj` files, skipping `bin`, `obj`, and hidden directories. When no `.sln` is found in the given directory, testament now searches parent directories up to the git repository root before falling back to `.csproj` discovery.
+
+### Fixed
+- **Test execution failing when run from a different directory** - `dotnet test` and `dotnet build` now run from the project's own directory instead of testament's working directory. Previously, running testament with a directory parameter could cause build failures because dependency resolution relied on the current working directory.
+
+## v1.0.2 - 2026-02-10
+
+### Fixed
+- **TRX file not found in PR mode** - Fixed `dotnet test` not creating the TRX results file at the expected path. Now uses `--results-directory` to explicitly control TRX output location instead of relying on an absolute `LogFileName` path.
+- **Stderr not visible during test execution** - Stderr is now streamed to the output pane in real-time via a separate thread, making build errors and dotnet diagnostics visible. Previously stderr was piped but never read, also risking process deadlock.
+- **Unhelpful error on test failure** - When dotnet test fails before producing results (e.g., build error, no matching tests), the error message now includes the exit code instead of a generic file-not-found error. The dotnet command is also logged to the output pane for manual reproduction.
+
 ## v1.0.1 - 2026-02-06
 
 ### Fixed

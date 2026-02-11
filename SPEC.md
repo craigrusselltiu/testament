@@ -15,8 +15,8 @@ Testament automatically discovers test projects by searching for a solution file
 ### Discovery Order
 
 1. Look for `.testament.toml` in current directory (may specify explicit paths)
-2. Search upward for `.sln` file, parse for test projects
-3. Fall back to recursive glob for `*Tests.csproj`, `*Test.csproj`, `*.Tests.csproj`
+2. Search current directory and parent directories (up to git repo root) for `.sln` file, parse for test projects
+3. Fall back to recursive search for `*.csproj` files in the given directory
 
 ### Test Project Detection
 

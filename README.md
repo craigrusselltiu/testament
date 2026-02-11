@@ -1,6 +1,6 @@
 # Testament
 
-![Version](https://img.shields.io/badge/version-1.0.1-green)
+![Version](https://img.shields.io/badge/version-1.1.0-green)
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -89,11 +89,27 @@ cd /path/to/your/dotnet/solution
 testament
 ```
 
+Or pass a path directly:
+
+```bash
+# Point to a solution file
+testament path/to/MySolution.sln
+
+# Point to a test project
+testament path/to/MyProject.Tests/MyProject.Tests.csproj
+
+# Point to a directory - testament will search for a .sln in that
+# directory and parent directories (up to the git repo root).
+# If no .sln is found, it recursively finds all .csproj files.
+testament path/to/some/directory
+```
+
 Testament will automatically:
-1. Search the current directory for a `.sln` file (or `.csproj` if no solution found)
+1. Search the given directory (and parent directories) for a `.sln` file
 2. Parse the solution to find test projects (projects ending in `Tests` or `Test`)
-3. Run `dotnet test --list-tests` to discover individual tests
-4. Display projects and tests in the TUI
+3. If no `.sln` found, recursively search for `.csproj` files in the directory
+4. Run `dotnet test --list-tests` to discover individual tests
+5. Display projects and tests in the TUI
 
 ## Usage
 
