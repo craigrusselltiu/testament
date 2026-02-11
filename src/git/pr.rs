@@ -1,7 +1,21 @@
 use std::process::Command;
+use std::sync::LazyLock;
 use regex::Regex;
 
 use crate::error::TestamentError;
+
+static PR_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)").expect("Invalid regex")
+});
+static TEST_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\[(Fact|Theory|Test|TestMethod|TestCase)\b[^\]]*\]").expect("Invalid regex")
+});
+static METHOD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:public\s+)?(?:async\s+)?(?:Task|void)\s+(\w+)\s*\(").expect("Invalid regex")
+});
+static TEST_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(Test\w*|\w+Test|\w+Tests|\w+Should\w*|Should\w+)$").expect("Invalid regex")
+});
 
 /// Information extracted from a GitHub PR URL
 #[derive(Debug, Clone)]
@@ -14,10 +28,7 @@ pub struct PrInfo {
 /// Parse a GitHub PR URL into its components
 /// Supports: https://github.com/owner/repo/pull/123
 pub fn parse_pr_url(url: &str) -> Result<PrInfo, TestamentError> {
-    let re = Regex::new(r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
-        .map_err(|e| TestamentError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))?;
-
-    let caps = re.captures(url).ok_or_else(|| {
+    let caps = PR_URL_RE.captures(url).ok_or_else(|| {
         TestamentError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("Invalid PR URL format: {}", url),
@@ -156,21 +167,6 @@ fn is_test_file(path: &str) -> bool {
 /// Extract test method names from added lines using regex pattern matching.
 /// Since diff hunks may contain incomplete code, use pattern matching instead of tree-sitter.
 fn extract_tests_from_added_lines(file_path: &str, added_content: &str, tests: &mut Vec<ChangedTest>) {
-    // Pattern to match test attributes
-    let test_attr_pattern = Regex::new(
-        r"(?i)\[(Fact|Theory|Test|TestMethod|TestCase)\b[^\]]*\]"
-    ).expect("Invalid regex");
-    
-    // Pattern to match method declarations (public void/async methods)
-    let method_pattern = Regex::new(
-        r"(?:public\s+)?(?:async\s+)?(?:Task|void)\s+(\w+)\s*\("
-    ).expect("Invalid regex");
-    
-    // Pattern to match methods that look like tests by name (Test*, *Test, *Tests, Should*, etc.)
-    let test_name_pattern = Regex::new(
-        r"^(Test\w*|\w+Test|\w+Tests|\w+Should\w*|Should\w+)$"
-    ).expect("Invalid regex");
-    
     let lines: Vec<&str> = added_content.lines().collect();
     let mut found_methods = std::collections::HashSet::new();
     
@@ -178,11 +174,11 @@ fn extract_tests_from_added_lines(file_path: &str, added_content: &str, tests: &
         let line = lines[i].trim();
         
         // Strategy 1: Look for test attributes followed by method declarations
-        if test_attr_pattern.is_match(line) {
+        if TEST_ATTR_RE.is_match(line) {
             let end_idx = std::cmp::min(i + 5, lines.len());
             for next_line in lines.iter().take(end_idx).skip(i + 1) {
                 let next_line = next_line.trim();
-                if let Some(caps) = method_pattern.captures(next_line) {
+                if let Some(caps) = METHOD_RE.captures(next_line) {
                     if let Some(method_name) = caps.get(1) {
                         found_methods.insert(method_name.as_str().to_string());
                         break;
@@ -192,10 +188,10 @@ fn extract_tests_from_added_lines(file_path: &str, added_content: &str, tests: &
         }
         
         // Strategy 2: Look for method declarations that look like tests by naming convention
-        if let Some(caps) = method_pattern.captures(line) {
+        if let Some(caps) = METHOD_RE.captures(line) {
             if let Some(method_name) = caps.get(1) {
                 let name = method_name.as_str();
-                if test_name_pattern.is_match(name) {
+                if TEST_NAME_RE.is_match(name) {
                     found_methods.insert(name.to_string());
                 }
             }

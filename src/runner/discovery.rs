@@ -170,11 +170,14 @@ pub fn discover_projects_from_paths(project_paths: Vec<PathBuf>) -> Result<(Vec<
                     // Get project directory for C# parsing
                     let project_dir = path.parent().unwrap_or(Path::new("."));
 
-                    // Build map of method names to full qualified names from C# source
-                    let name_map = build_test_name_map(project_dir);
+                    // Run tree-sitter parsing and dotnet list-tests concurrently
+                    let (name_map, test_result) = std::thread::scope(|s| {
+                        let nm = s.spawn(|| build_test_name_map(project_dir));
+                        let lt = s.spawn(|| list_tests(&path));
+                        (nm.join().unwrap(), lt.join().unwrap())
+                    });
 
-                    // Try to list tests, report error if it fails
-                    match list_tests(&path) {
+                    match test_result {
                         Ok(test_names) => {
                             let classes = group_tests_by_class(test_names, &name_map);
                             let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
@@ -281,7 +284,7 @@ fn get_cache_path(project_path: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("testament_discovery_{:x}.cache", hash))
 }
 
-/// Get the modification time of a project (csproj + any cs files)
+/// Get the modification time of a project (max of csproj mtime and newest DLL in bin/)
 fn get_project_mtime(project_path: &Path) -> Option<u64> {
     let csproj_mtime = std::fs::metadata(project_path)
         .and_then(|m| m.modified())
@@ -289,7 +292,43 @@ fn get_project_mtime(project_path: &Path) -> Option<u64> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_secs();
-    Some(csproj_mtime)
+
+    let mut max_mtime = csproj_mtime;
+
+    // Check newest DLL in bin/ - rebuilds update DLLs even when csproj doesn't change
+    if let Some(project_dir) = project_path.parent() {
+        let bin_dir = project_dir.join("bin");
+        if let Ok(dll_mtime) = newest_file_mtime(&bin_dir, "dll") {
+            max_mtime = max_mtime.max(dll_mtime);
+        }
+    }
+
+    Some(max_mtime)
+}
+
+/// Find the newest file with the given extension under a directory (recursive).
+fn newest_file_mtime(dir: &Path, ext: &str) -> std::result::Result<u64, std::io::Error> {
+    let mut max: u64 = 0;
+    newest_file_mtime_recursive(dir, ext, &mut max)?;
+    Ok(max)
+}
+
+fn newest_file_mtime_recursive(dir: &Path, ext: &str, max: &mut u64) -> std::result::Result<(), std::io::Error> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            let _ = newest_file_mtime_recursive(&entry.path(), ext, max);
+        } else if ft.is_file() && entry.path().extension().is_some_and(|e| e == ext) {
+            if let Ok(mtime) = entry.metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+            {
+                *max = (*max).max(mtime);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Try to load cached test list
@@ -356,22 +395,26 @@ fn group_tests_by_class(
         classes.entry(class_full_name).or_default().push(test);
     }
 
-    classes
+    let mut result: Vec<TestClass> = classes
         .into_iter()
-        .map(|(full_name, tests)| {
+        .map(|(full_name, mut tests)| {
             let parts: Vec<&str> = full_name.rsplitn(2, '.').collect();
             let (class_name, namespace) = if parts.len() == 2 {
                 (parts[0].to_string(), parts[1].to_string())
             } else {
                 (full_name.clone(), String::new())
             };
-            TestClass {
-                name: class_name,
-                namespace,
-                tests,
-            }
+            // Pre-sort tests by name_lower so render doesn't need to sort
+            tests.sort_by(|a, b| a.name_lower.cmp(&b.name_lower));
+            let mut class = TestClass::new(class_name, namespace);
+            class.tests = tests;
+            class
         })
-        .collect()
+        .collect();
+
+    // Pre-sort classes by full_name_lower so render doesn't need to sort
+    result.sort_by(|a, b| a.full_name_lower.cmp(&b.full_name_lower));
+    result
 }
 
 #[cfg(test)]

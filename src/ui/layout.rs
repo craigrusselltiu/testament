@@ -121,8 +121,13 @@ pub struct AppState {
     pub status: String,
     pub context: Option<String>,
     pub running_project_idx: Option<usize>, // Track which project tests are running for
+    pub dirty: bool, // Only redraw when state has changed
     // Cached values for performance
     cached_output_lines: Option<(u16, usize)>, // (total_lines, output_len) - invalidated when output changes
+    pub output_newline_count: usize, // Incremental newline count for O(1) scroll bounds
+    cached_test_items: Vec<TestListItem>,
+    cached_test_items_key: Option<(usize, u64, String)>, // (project_idx, collapse_generation, filter)
+    collapse_generation: u64, // Incremented on collapse state changes, replaces expensive hash
 }
 
 impl AppState {
@@ -155,22 +160,56 @@ impl AppState {
             status: "Ready".to_string(),
             context: None,
             running_project_idx: None,
+            dirty: true, // Draw on first frame
             cached_output_lines: None,
+            output_newline_count: 0,
+            cached_test_items: Vec::new(),
+            cached_test_items_key: None,
+            collapse_generation: 0,
         }
     }
 
     pub fn append_output(&mut self, text: &str) {
         self.output.push_str(text);
-        self.cached_output_lines = None; // Invalidate cache
+        self.output_newline_count += text.bytes().filter(|&b| b == b'\n').count();
+        self.cached_output_lines = None;
+        self.dirty = true;
+
+        // Bound output buffer at 2000 lines, trim to 1000 when exceeded
+        const MAX_LINES: usize = 2000;
+        const TRIM_TO: usize = 1000;
+        if self.output_newline_count > MAX_LINES {
+            let skip = self.output_newline_count - TRIM_TO;
+            let mut newlines_found = 0;
+            let mut trim_pos = 0;
+            for (i, b) in self.output.bytes().enumerate() {
+                if b == b'\n' {
+                    newlines_found += 1;
+                    if newlines_found >= skip {
+                        trim_pos = i + 1;
+                        break;
+                    }
+                }
+            }
+            if trim_pos > 0 && trim_pos < self.output.len() {
+                self.output.replace_range(..trim_pos, "");
+                self.output_newline_count = TRIM_TO;
+                self.cached_output_lines = None;
+                self.output_scroll = 0;
+            }
+        }
+
         if self.output_auto_scroll {
             self.scroll_output_to_bottom();
         }
     }
-    
+
     pub fn clear_output(&mut self) {
         self.output.clear();
         self.output_scroll = 0;
-        self.cached_output_lines = None; // Invalidate cache
+        self.output_newline_count = 0;
+        self.cached_output_lines = None;
+        self.dirty = true;
     }
 
     /// Get total wrapped line count, using cache if valid
@@ -234,6 +273,8 @@ impl AppState {
         } else {
             self.collapsed_classes.insert(key);
         }
+        self.collapse_generation += 1;
+        self.dirty = true;
     }
 
     pub fn toggle_test_selected(&mut self, test_name: &str) {
@@ -242,30 +283,66 @@ impl AppState {
         } else {
             self.selected_tests.insert(test_name.to_string());
         }
+        self.dirty = true;
     }
 
     pub fn clear_selection(&mut self) {
         self.selected_tests.clear();
+        self.dirty = true;
+    }
+
+    /// Invalidate the cached test items (call when classes, collapsed state, or results change)
+    pub fn invalidate_test_items(&mut self) {
+        self.cached_test_items_key = None;
+        self.dirty = true;
+    }
+
+    /// Get the cached test items, rebuilding if needed
+    pub fn get_test_items(&mut self) -> &[TestListItem] {
+        let project_idx = self.project_state.selected().unwrap_or(usize::MAX);
+        let key = (project_idx, self.collapse_generation, self.filter.clone());
+
+        let needs_rebuild = self.cached_test_items_key.as_ref() != Some(&key);
+
+        if needs_rebuild {
+            let items = if let Some(project) = self.projects.get(project_idx) {
+                build_test_items(
+                    &project.classes,
+                    &self.collapsed_classes,
+                    &self.filter,
+                    &project.name,
+                )
+            } else {
+                Vec::new()
+            };
+            self.cached_test_items = items;
+            self.cached_test_items_key = Some(key);
+        }
+
+        &self.cached_test_items
     }
 
     /// Toggle between expanding all and collapsing all classes for the current project
-    pub fn toggle_expand_collapse_all(&mut self, project_name: &str, classes: &[crate::model::TestClass]) {
+    pub fn toggle_expand_collapse_all(&mut self, project_name: &str, class_full_names: &[String]) {
         // Check if any classes are currently collapsed for this project
-        let any_collapsed = classes.iter().any(|class| {
-            let key = format!("{}::{}", project_name, class.full_name());
+        let any_collapsed = class_full_names.iter().any(|name| {
+            let key = format!("{}::{}", project_name, name);
             self.collapsed_classes.contains(&key)
         });
 
         if any_collapsed {
             // Expand all: remove all collapse keys for this project
-            self.collapsed_classes.retain(|key| !key.starts_with(&format!("{}::", project_name)));
+            let prefix = format!("{}::", project_name);
+            self.collapsed_classes.retain(|key| !key.starts_with(&prefix));
         } else {
             // Collapse all: add collapse keys for all classes in this project
-            for class in classes {
-                let key = format!("{}::{}", project_name, class.full_name());
+            for name in class_full_names {
+                let key = format!("{}::{}", project_name, name);
                 self.collapsed_classes.insert(key);
             }
         }
+        self.collapse_generation += 1;
+        self.dirty = true;
     }
 }
 
@@ -323,6 +400,13 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     );
     frame.render_stateful_widget(project_list, chunks[0], &mut state.project_state);
 
+    // Resolve selected test item from cache BEFORE borrowing classes
+    let selected_item_info: Option<TestListItem> = {
+        let test_selected = state.test_state.selected();
+        let items = state.get_test_items();
+        test_selected.and_then(|idx| items.get(idx).cloned())
+    };
+
     // Middle pane: Tests
     let selected_idx = state.project_state.selected();
     let (classes, project_name): (&[_], &str) = selected_idx
@@ -351,7 +435,7 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     frame.render_widget(output_pane, right_chunks[0]);
 
     // Right bottom: Test Result pane
-    let (selected_test, context_message) = get_selected_test_with_context(state, classes, project_name);
+    let (selected_test, context_message) = get_selected_test_with_context(state, classes, selected_item_info.as_ref());
     let test_result_pane = TestResultPane::new(
         selected_test,
         &state.theme,
@@ -406,9 +490,9 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
 }
 
 fn get_selected_test_with_context<'a>(
-    state: &AppState, 
-    classes: &'a [TestClass], 
-    project_name: &str
+    state: &AppState,
+    classes: &'a [TestClass],
+    selected_item: Option<&TestListItem>,
 ) -> (Option<&'a Test>, Option<String>) {
     // If focused on Projects pane, show project info
     if state.active_pane == Pane::Projects {
@@ -422,45 +506,39 @@ fn get_selected_test_with_context<'a>(
         return (None, None);
     }
 
-    // If in Tests pane, check what's selected
-    if let Some(selected_idx) = state.test_state.selected() {
-        let items = build_test_items(classes, &state.collapsed_classes, &state.filter, project_name);
-        if let Some(item) = items.get(selected_idx) {
-            match item {
-                TestListItem::Test(full_name) => {
-                    // Find the test in classes
-                    for class in classes {
-                        for test in &class.tests {
-                            if &test.full_name == full_name {
-                                return (Some(test), None);
-                            }
+    // Use pre-resolved selected item from cached test items
+    if let Some(item) = selected_item {
+        match item {
+            TestListItem::Test(full_name) => {
+                for class in classes {
+                    for test in &class.tests {
+                        if &test.full_name == full_name {
+                            return (Some(test), None);
                         }
                     }
                 }
-                TestListItem::Class(class_name) => {
-                    // Find test count for this class
+            }
+            TestListItem::Class(class_name) => {
+                for class in classes {
+                    if &class.full_name == class_name {
+                        let test_count = class.tests.len();
+                        let message = format!("Tests found in class: {}", test_count);
+                        return (None, Some(message));
+                    }
+                }
+                if class_name.is_empty() {
                     for class in classes {
-                        if &class.full_name() == class_name {
+                        if class.full_name.is_empty() {
                             let test_count = class.tests.len();
                             let message = format!("Tests found in class: {}", test_count);
                             return (None, Some(message));
-                        }
-                    }
-                    // Handle Uncategorized (empty class name)
-                    if class_name.is_empty() {
-                        for class in classes {
-                            if class.full_name().is_empty() {
-                                let test_count = class.tests.len();
-                                let message = format!("Tests found in class: {}", test_count);
-                                return (None, Some(message));
-                            }
                         }
                     }
                 }
             }
         }
     }
-    
+
     (None, None)
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -13,7 +14,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
 use crate::runner::{DiscoveryEvent, ExecutorEvent, FileWatcher, TestExecutor};
-use crate::ui::{self, build_test_items, layout::{AppState, startup_art, random_startup_phrase, random_ready_phrase}, Pane, TestListItem};
+use crate::ui::{self, layout::{AppState, startup_art, random_startup_phrase, random_ready_phrase}, Pane, TestListItem};
 
 pub fn run(
     projects: Vec<TestProject>,
@@ -54,11 +55,10 @@ pub fn run_with_preselected(
 
     // Main loop
     loop {
-        terminal.draw(|f| ui::draw(f, &mut state))?;
-
         // Check for discovery events (background test discovery)
         if state.discovering {
             while let Ok(event) = discovery_rx.try_recv() {
+                state.dirty = true;
                 match event {
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
                         // Filter to only preselected tests if in PR mode
@@ -74,17 +74,13 @@ pub fn run_with_preselected(
                             .map(|p| p.name.clone())
                             .unwrap_or_default();
                         for class in &classes {
-                            let class_full_name = if class.namespace.is_empty() {
-                                class.name.clone()
-                            } else {
-                                format!("{}.{}", class.namespace, class.name)
-                            };
-                            let collapse_key = AppState::collapse_key(&project_name, &class_full_name);
+                            let collapse_key = AppState::collapse_key(&project_name, &class.full_name);
                             state.collapsed_classes.insert(collapse_key);
                         }
                         if let Some(project) = state.projects.get_mut(idx) {
                             project.classes = classes;
                         }
+                        state.invalidate_test_items();
                     }
                     DiscoveryEvent::ProjectError(idx, error) => {
                         // Log the error to the output pane (first 3 lines for brevity)
@@ -121,6 +117,7 @@ pub fn run_with_preselected(
                                 state.append_output(&format!("\n[PR] Loaded {} changed test(s).", count));
                                 // Expand all classes to show selected tests
                                 state.collapsed_classes.clear();
+                                state.invalidate_test_items();
                             }
                         }
                     }
@@ -132,6 +129,7 @@ pub fn run_with_preselected(
         if state.watch_mode {
             if let Some(ref watcher) = file_watcher {
                 if watcher.try_recv() && executor_rx.is_none() {
+                    state.dirty = true;
                     state.append_output("\n[Watch] File change detected, running tests...\n");
                     run_tests(&mut state, &mut executor_rx);
                 }
@@ -141,6 +139,7 @@ pub fn run_with_preselected(
         // Check for executor events
         if let Some(ref rx) = executor_rx {
             while let Ok(event) = rx.try_recv() {
+                state.dirty = true;
                 match event {
                     ExecutorEvent::OutputLine(line) => {
                         let trimmed = line.trim();
@@ -180,6 +179,7 @@ pub fn run_with_preselected(
                         }
 
                         apply_results(&mut state, &results);
+                        state.invalidate_test_items();
 
                         // Show summary
                         let total = passed + failed + skipped;
@@ -210,163 +210,182 @@ pub fn run_with_preselected(
             }
         }
 
-        // Poll for keyboard input with timeout
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        // Only redraw when state has changed
+        if state.dirty {
+            terminal.draw(|f| ui::draw(f, &mut state))?;
+            state.dirty = false;
+        }
 
-                // Handle filter mode input
-                if state.filter_active {
+        // Dynamic timeout: fast when active operations are running, slow when idle
+        let poll_timeout = if state.discovering || executor_rx.is_some() {
+            Duration::from_millis(33)
+        } else {
+            Duration::from_millis(250)
+        };
+
+        // Poll for keyboard input with timeout
+        if event::poll(poll_timeout)? {
+            match event::read()? {
+                Event::Resize(_, _) => {
+                    state.dirty = true;
+                }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    state.dirty = true;
+
+                    // Handle filter mode input
+                    if state.filter_active {
+                        match key.code {
+                            KeyCode::Esc => {
+                                state.filter_active = false;
+                            }
+                            KeyCode::Enter => {
+                                state.filter_active = false;
+                            }
+                            KeyCode::Backspace => {
+                                state.filter.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                state.filter.push(c);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Down => {
+                            move_selection(&mut state, 1);
+                        }
+                        KeyCode::Up => {
+                            move_selection(&mut state, -1);
+                        }
+                        KeyCode::Left => {
+                            move_to_prev_group(&mut state);
+                        }
+                        KeyCode::Right => {
+                            move_to_next_group(&mut state);
+                        }
+                        KeyCode::Tab => {
+                            state.active_pane = match state.active_pane {
+                                Pane::Projects => Pane::Tests,
+                                Pane::Tests => Pane::Output,
+                                Pane::Output => Pane::TestResult,
+                                Pane::TestResult => Pane::Projects,
+                            };
+                        }
+                        KeyCode::BackTab => {
+                            state.active_pane = match state.active_pane {
+                                Pane::Projects => Pane::TestResult,
+                                Pane::Tests => Pane::Projects,
+                                Pane::Output => Pane::Tests,
+                                Pane::TestResult => Pane::Output,
+                            };
+                        }
+                        KeyCode::Char(' ') => {
+                            if state.active_pane == Pane::Tests {
+                                toggle_space_action(&mut state);
+                            }
+                        }
+                        KeyCode::Char('x') => {
+                            state.clear_output();
+                            state.test_progress = None;
+                        }
+                        KeyCode::Char('c') => {
+                            // Expand/collapse all classes in current project
+                            if let Some(idx) = state.project_state.selected() {
+                                if let Some(project) = state.projects.get(idx) {
+                                    let project_name = project.name.clone();
+                                    let class_full_names: Vec<String> = project.classes.iter()
+                                        .map(|c| c.full_name.clone())
+                                        .collect();
+                                    state.toggle_expand_collapse_all(&project_name, &class_full_names);
+                                }
+                            }
+                        }
+                        KeyCode::Char('C') => {
+                            // Clear test selections
+                            state.clear_selection();
+                        }
+                        KeyCode::Char('/') => {
+                            state.filter_active = true;
+                            state.filter.clear();
+                        }
                         KeyCode::Esc => {
-                            state.filter_active = false;
+                            if !state.filter.is_empty() {
+                                state.filter.clear();
+                            }
                         }
-                        KeyCode::Enter => {
-                            state.filter_active = false;
+                        KeyCode::Char('w') => {
+                            state.watch_mode = !state.watch_mode;
+                            if state.watch_mode {
+                                match FileWatcher::new(&solution_dir) {
+                                    Ok(watcher) => {
+                                        file_watcher = Some(watcher);
+                                        state.append_output("\n[Watch] Watch mode enabled\n");
+                                    }
+                                    Err(e) => {
+                                        state.watch_mode = false;
+                                        state.append_output(&format!(
+                                            "\n[Watch] Failed to enable watch mode: {}\n",
+                                            e
+                                        ));
+                                    }
+                                }
+                            } else {
+                                file_watcher = None;
+                                state.append_output("\n[Watch] Watch mode disabled\n");
+                            }
                         }
-                        KeyCode::Backspace => {
-                            state.filter.pop();
+                        KeyCode::Char('r') => {
+                            if executor_rx.is_none() {
+                                // If tests are multi-selected, run those
+                                if !state.selected_tests.is_empty() {
+                                    run_tests(&mut state, &mut executor_rx);
+                                    continue;
+                                }
+
+                                // If in Tests pane, check what's under cursor
+                                if state.active_pane == Pane::Tests {
+                                    // Check if a class is selected - run all tests in that class
+                                    if let Some(class_tests) = get_selected_class_tests(&mut state) {
+                                        run_class_tests(&mut state, &mut executor_rx, class_tests);
+                                        continue;
+                                    }
+
+                                    // Check if a single test is selected - run just that test
+                                    if let Some(test_name) = get_selected_single_test(&mut state) {
+                                        run_class_tests(&mut state, &mut executor_rx, vec![test_name]);
+                                        continue;
+                                    }
+                                }
+
+                                // Fallback: run all tests in project
+                                run_tests(&mut state, &mut executor_rx);
+                            }
                         }
-                        KeyCode::Char(c) => {
-                            state.filter.push(c);
+                        KeyCode::Char('R') => {
+                            // Shift+R: always run all tests in the project
+                            if executor_rx.is_none() {
+                                // Clear selection to run all tests
+                                state.selected_tests.clear();
+                                run_tests(&mut state, &mut executor_rx);
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if executor_rx.is_none() {
+                                build_project(&mut state, &mut executor_rx);
+                            }
+                        }
+                        KeyCode::Char('a') => {
+                            if executor_rx.is_none() && !state.last_failed.is_empty() {
+                                run_failed_tests(&mut state, &mut executor_rx);
+                            }
                         }
                         _ => {}
                     }
-                    continue;
                 }
-
-                match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Down => {
-                        move_selection(&mut state, 1);
-                    }
-                    KeyCode::Up => {
-                        move_selection(&mut state, -1);
-                    }
-                    KeyCode::Left => {
-                        move_to_prev_group(&mut state);
-                    }
-                    KeyCode::Right => {
-                        move_to_next_group(&mut state);
-                    }
-                    KeyCode::Tab => {
-                        state.active_pane = match state.active_pane {
-                            Pane::Projects => Pane::Tests,
-                            Pane::Tests => Pane::Output,
-                            Pane::Output => Pane::TestResult,
-                            Pane::TestResult => Pane::Projects,
-                        };
-                    }
-                    KeyCode::BackTab => {
-                        state.active_pane = match state.active_pane {
-                            Pane::Projects => Pane::TestResult,
-                            Pane::Tests => Pane::Projects,
-                            Pane::Output => Pane::Tests,
-                            Pane::TestResult => Pane::Output,
-                        };
-                    }
-                    KeyCode::Char(' ') => {
-                        if state.active_pane == Pane::Tests {
-                            toggle_space_action(&mut state);
-                        }
-                    }
-                    KeyCode::Char('x') => {
-                        state.clear_output();
-                        state.test_progress = None;
-                    }
-                    KeyCode::Char('c') => {
-                        // Expand/collapse all classes in current project
-                        if let Some(idx) = state.project_state.selected() {
-                            if let Some(project) = state.projects.get(idx) {
-                                let project_name = project.name.clone();
-                                let classes = project.classes.clone();
-                                state.toggle_expand_collapse_all(&project_name, &classes);
-                            }
-                        }
-                    }
-                    KeyCode::Char('C') => {
-                        // Clear test selections
-                        state.clear_selection();
-                    }
-                    KeyCode::Char('/') => {
-                        state.filter_active = true;
-                        state.filter.clear();
-                    }
-                    KeyCode::Esc => {
-                        if !state.filter.is_empty() {
-                            state.filter.clear();
-                        }
-                    }
-                    KeyCode::Char('w') => {
-                        state.watch_mode = !state.watch_mode;
-                        if state.watch_mode {
-                            match FileWatcher::new(&solution_dir) {
-                                Ok(watcher) => {
-                                    file_watcher = Some(watcher);
-                                    state.append_output("\n[Watch] Watch mode enabled\n");
-                                }
-                                Err(e) => {
-                                    state.watch_mode = false;
-                                    state.append_output(&format!(
-                                        "\n[Watch] Failed to enable watch mode: {}\n",
-                                        e
-                                    ));
-                                }
-                            }
-                        } else {
-                            file_watcher = None;
-                            state.append_output("\n[Watch] Watch mode disabled\n");
-                        }
-                    }
-                    KeyCode::Char('r') => {
-                        if executor_rx.is_none() {
-                            // If tests are multi-selected, run those
-                            if !state.selected_tests.is_empty() {
-                                run_tests(&mut state, &mut executor_rx);
-                                continue;
-                            }
-                            
-                            // If in Tests pane, check what's under cursor
-                            if state.active_pane == Pane::Tests {
-                                // Check if a class is selected - run all tests in that class
-                                if let Some(class_tests) = get_selected_class_tests(&state) {
-                                    run_class_tests(&mut state, &mut executor_rx, class_tests);
-                                    continue;
-                                }
-                                
-                                // Check if a single test is selected - run just that test
-                                if let Some(test_name) = get_selected_single_test(&state) {
-                                    run_class_tests(&mut state, &mut executor_rx, vec![test_name]);
-                                    continue;
-                                }
-                            }
-                            
-                            // Fallback: run all tests in project
-                            run_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('R') => {
-                        // Shift+R: always run all tests in the project
-                        if executor_rx.is_none() {
-                            // Clear selection to run all tests
-                            state.selected_tests.clear();
-                            run_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('b') => {
-                        if executor_rx.is_none() {
-                            build_project(&mut state, &mut executor_rx);
-                        }
-                    }
-                    KeyCode::Char('a') => {
-                        if executor_rx.is_none() && !state.last_failed.is_empty() {
-                            run_failed_tests(&mut state, &mut executor_rx);
-                        }
-                    }
-                    _ => {}
-                }
+                _ => {}
             }
         }
     }
@@ -389,26 +408,16 @@ fn move_selection(state: &mut AppState, delta: i32) {
             state.project_state.select(Some(new));
         }
         Pane::Tests => {
-            if let Some(idx) = state.project_state.selected() {
-                if let Some(project) = state.projects.get(idx) {
-                    let items = build_test_items(
-                        &project.classes,
-                        &state.collapsed_classes,
-                        &state.filter,
-                        &project.name,
-                    );
-                    let len = items.len();
-                    if len == 0 {
-                        return;
-                    }
-                    let current = state.test_state.selected().unwrap_or(0) as i32;
-                    let new = (current + delta).rem_euclid(len as i32) as usize;
-                    state.test_state.select(Some(new));
-                }
+            let len = state.get_test_items().len();
+            if len == 0 {
+                return;
             }
+            let current = state.test_state.selected().unwrap_or(0) as i32;
+            let new = (current + delta).rem_euclid(len as i32) as usize;
+            state.test_state.select(Some(new));
         }
         Pane::Output => {
-            let line_count = state.output.lines().count() as i32;
+            let line_count = state.output_newline_count as i32;
             let current = state.output_scroll as i32;
             let new = (current + delta).max(0).min(line_count.saturating_sub(1));
             state.output_scroll = new as u16;
@@ -423,47 +432,46 @@ fn move_selection(state: &mut AppState, delta: i32) {
 }
 
 fn toggle_collapse(state: &mut AppState) {
-    if let Some(idx) = state.project_state.selected() {
-        // Clone what we need to avoid borrow issues
-        let (project_name, class_name) = {
-            if let Some(project) = state.projects.get(idx) {
-                let items = build_test_items(
-                    &project.classes,
-                    &state.collapsed_classes,
-                    &state.filter,
-                    &project.name,
-                );
-                if let Some(selected) = state.test_state.selected() {
-                    if let Some(TestListItem::Class(class_name)) = items.get(selected) {
-                        (project.name.clone(), class_name.clone())
-                    } else {
-                        return;
-                    }
-                } else {
-                    return;
-                }
+    let selected = state.test_state.selected();
+    let project_idx = state.project_state.selected();
+    let project_name = project_idx
+        .and_then(|idx| state.projects.get(idx))
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+
+    let class_name = {
+        let items = state.get_test_items();
+        if let Some(selected) = selected {
+            if let Some(TestListItem::Class(class_name)) = items.get(selected) {
+                class_name.clone()
             } else {
                 return;
             }
-        };
-        state.toggle_class_collapsed(&project_name, &class_name);
-    }
+        } else {
+            return;
+        }
+    };
+    state.toggle_class_collapsed(&project_name, &class_name);
+    state.invalidate_test_items();
 }
 
 fn toggle_space_action(state: &mut AppState) {
-    if let Some(idx) = state.project_state.selected() {
-        if let Some(project) = state.projects.get(idx) {
-            let items =
-                build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
-            if let Some(selected) = state.test_state.selected() {
-                if let Some(item) = items.get(selected) {
-                    match item {
-                        TestListItem::Class(_) => toggle_collapse(state),
-                        TestListItem::Test(test_name) => state.toggle_test_selected(test_name),
-                    }
-                }
-            }
+    let selected = state.test_state.selected();
+    let action = {
+        let items = state.get_test_items();
+        if let Some(selected) = selected {
+            items.get(selected).map(|item| match item {
+                TestListItem::Class(_) => None, // will call toggle_collapse
+                TestListItem::Test(test_name) => Some(test_name.clone()),
+            })
+        } else {
+            None
         }
+    };
+    match action {
+        Some(None) => toggle_collapse(state),
+        Some(Some(test_name)) => state.toggle_test_selected(&test_name),
+        None => {}
     }
 }
 
@@ -499,7 +507,8 @@ fn run_tests(
                 return;
             }
             mark_filtered_tests_running(state, &filtered);
-            (Some(filtered), count)
+            let filtered_vec: Vec<String> = filtered.into_iter().collect();
+            (Some(filtered_vec), count)
         } else {
             mark_all_tests_running(state);
             let count = state.projects.get(idx).map(|p| p.test_count()).unwrap_or(0);
@@ -549,13 +558,15 @@ fn run_failed_tests(
 
             // Mark failed tests as running
             let failed_count = state.last_failed.len();
+            // Precompute suffixes for O(1) lookup
+            let failed_suffixes: HashSet<String> = state.last_failed.iter()
+                .filter_map(|f| f.rsplit_once('.').map(|(_, name)| name.to_string()))
+                .collect();
             if let Some(project) = state.projects.get_mut(idx) {
                 for class in &mut project.classes {
                     for test in &mut class.tests {
                         if state.last_failed.contains(&test.full_name)
-                            || state.last_failed.iter().any(|f| {
-                                f.ends_with(&format!(".{}", test.full_name))
-                            })
+                            || failed_suffixes.contains(&test.full_name)
                         {
                             test.status = TestStatus::Running;
                         }
@@ -602,16 +613,16 @@ fn mark_selected_tests_running(state: &mut AppState) {
     }
 }
 
-fn get_filtered_tests(state: &AppState) -> Vec<String> {
+fn get_filtered_tests(state: &AppState) -> HashSet<String> {
     let filter_lower = state.filter.to_lowercase();
-    let mut tests = Vec::new();
+    let mut tests = HashSet::new();
 
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get(idx) {
             for class in &project.classes {
                 for test in &class.tests {
-                    if test.name.to_lowercase().contains(&filter_lower) {
-                        tests.push(test.full_name.clone());
+                    if test.name_lower.contains(&filter_lower) {
+                        tests.insert(test.full_name.clone());
                     }
                 }
             }
@@ -621,7 +632,7 @@ fn get_filtered_tests(state: &AppState) -> Vec<String> {
     tests
 }
 
-fn mark_filtered_tests_running(state: &mut AppState, filtered_tests: &[String]) {
+fn mark_filtered_tests_running(state: &mut AppState, filtered_tests: &HashSet<String>) {
     if let Some(idx) = state.project_state.selected() {
         if let Some(project) = state.projects.get_mut(idx) {
             for class in &mut project.classes {
@@ -636,22 +647,43 @@ fn mark_filtered_tests_running(state: &mut AppState, filtered_tests: &[String]) 
 }
 
 fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
+    use std::collections::HashMap;
+
     // Use running_project_idx to update the correct project, not the currently selected one
     let idx = state.running_project_idx.or(state.project_state.selected());
     if let Some(idx) = idx {
         if let Some(project) = state.projects.get_mut(idx) {
-            // Track which results have been consumed to prevent one result
-            // matching multiple tests (e.g., same method name in different classes)
+            // Build index: map from test_name -> Vec<(index, &result)>
+            // Also map from suffix (last segment after '.') -> Vec<(index, &result)>
+            let mut by_full_name: HashMap<&str, Vec<(usize, &crate::parser::TestResult)>> = HashMap::new();
+            let mut by_suffix: HashMap<&str, Vec<(usize, &crate::parser::TestResult)>> = HashMap::new();
+            let mut by_bare_name: HashMap<&str, Vec<(usize, &crate::parser::TestResult)>> = HashMap::new();
+
+            for (i, r) in results.iter().enumerate() {
+                by_full_name.entry(r.test_name.as_str()).or_default().push((i, r));
+                // Extract the part after the last '.' for suffix matching
+                if let Some(pos) = r.test_name.rfind('.') {
+                    let suffix = &r.test_name[pos + 1..];
+                    by_suffix.entry(suffix).or_default().push((i, r));
+                }
+                by_bare_name.entry(r.test_name.as_str()).or_default().push((i, r));
+            }
+
             let mut consumed = vec![false; results.len()];
 
-            // Pass 1: precise full_name matching
+            // Pass 1: precise full_name matching, then suffix matching
             for class in &mut project.classes {
                 for test in &mut class.tests {
-                    if let Some((i, result)) = results.iter().enumerate().find(|(i, r)| {
-                        !consumed[*i]
-                            && (r.test_name == test.full_name
-                                || r.test_name.ends_with(&format!(".{}", test.full_name)))
-                    }) {
+                    // Try exact match first
+                    let matched = by_full_name.get(test.full_name.as_str())
+                        .and_then(|entries| entries.iter().find(|(i, _)| !consumed[*i]))
+                        .or_else(|| {
+                            // Try suffix match: result ends with ".{test.full_name}"
+                            by_suffix.get(test.full_name.as_str())
+                                .and_then(|entries| entries.iter().find(|(i, _)| !consumed[*i]))
+                        });
+
+                    if let Some(&(i, result)) = matched {
                         consumed[i] = true;
                         test.status = match result.outcome {
                             TestOutcome::Passed => TestStatus::Passed,
@@ -668,9 +700,9 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
             for class in &mut project.classes {
                 for test in &mut class.tests {
                     if test.status == TestStatus::Running {
-                        if let Some((i, result)) = results.iter().enumerate().find(|(i, r)| {
-                            !consumed[*i] && r.test_name == test.name
-                        }) {
+                        if let Some(&(i, result)) = by_bare_name.get(test.name.as_str())
+                            .and_then(|entries| entries.iter().find(|(i, _)| !consumed[*i]))
+                        {
                             consumed[i] = true;
                             test.status = match result.outcome {
                                 TestOutcome::Passed => TestStatus::Passed,
@@ -690,21 +722,24 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
 }
 
 /// Get the tests for the currently selected class, if a class is selected.
-fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
+fn get_selected_class_tests(state: &mut AppState) -> Option<Vec<String>> {
+    let selected_idx = state.test_state.selected()?;
+    let class_full_name = {
+        let items = state.get_test_items();
+        if let Some(TestListItem::Class(name)) = items.get(selected_idx) {
+            name.clone()
+        } else {
+            return None;
+        }
+    };
+
     let project_idx = state.project_state.selected()?;
     let project = state.projects.get(project_idx)?;
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
-    let selected_idx = state.test_state.selected()?;
-    let item = items.get(selected_idx)?;
-
-    if let TestListItem::Class(class_full_name) = item {
-        // Find the class and collect all its test full names
-        for class in &project.classes {
-            if class.full_name() == *class_full_name {
-                let tests: Vec<String> = class.tests.iter().map(|t| t.full_name.clone()).collect();
-                if !tests.is_empty() {
-                    return Some(tests);
-                }
+    for class in &project.classes {
+        if class.full_name == class_full_name {
+            let tests: Vec<String> = class.tests.iter().map(|t| t.full_name.clone()).collect();
+            if !tests.is_empty() {
+                return Some(tests);
             }
         }
     }
@@ -713,18 +748,14 @@ fn get_selected_class_tests(state: &AppState) -> Option<Vec<String>> {
 }
 
 /// Get the currently selected single test, if a test (not class) is selected.
-fn get_selected_single_test(state: &AppState) -> Option<String> {
-    let project_idx = state.project_state.selected()?;
-    let project = state.projects.get(project_idx)?;
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
+fn get_selected_single_test(state: &mut AppState) -> Option<String> {
     let selected_idx = state.test_state.selected()?;
-    let item = items.get(selected_idx)?;
-
-    if let TestListItem::Test(test_full_name) = item {
-        return Some(test_full_name.clone());
+    let items = state.get_test_items();
+    if let Some(TestListItem::Test(test_full_name)) = items.get(selected_idx) {
+        Some(test_full_name.clone())
+    } else {
+        None
     }
-
-    None
 }
 
 /// Run tests for a specific class.
@@ -744,12 +775,13 @@ fn run_class_tests(
         state.running_project_idx = Some(idx);
 
         let test_count = tests.len();
+        let test_set: HashSet<String> = tests.iter().cloned().collect();
 
         // Mark these tests as running
         if let Some(project) = state.projects.get_mut(idx) {
             for class in &mut project.classes {
                 for test in &mut class.tests {
-                    if tests.contains(&test.full_name) {
+                    if test_set.contains(&test.full_name) {
                         test.status = TestStatus::Running;
                     }
                 }
@@ -773,21 +805,11 @@ fn move_to_next_group(state: &mut AppState) {
         return;
     }
 
-    let project_idx = match state.project_state.selected() {
-        Some(idx) => idx,
-        None => return,
-    };
-    let project = match state.projects.get(project_idx) {
-        Some(p) => p,
-        None => return,
-    };
-
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
+    let current_idx = state.test_state.selected().unwrap_or(0);
+    let items = state.get_test_items();
     if items.is_empty() {
         return;
     }
-
-    let current_idx = state.test_state.selected().unwrap_or(0);
 
     // Find next class after current position
     for (i, item) in items.iter().enumerate().skip(current_idx + 1) {
@@ -812,21 +834,11 @@ fn move_to_prev_group(state: &mut AppState) {
         return;
     }
 
-    let project_idx = match state.project_state.selected() {
-        Some(idx) => idx,
-        None => return,
-    };
-    let project = match state.projects.get(project_idx) {
-        Some(p) => p,
-        None => return,
-    };
-
-    let items = build_test_items(&project.classes, &state.collapsed_classes, &state.filter, &project.name);
+    let current_idx = state.test_state.selected().unwrap_or(0);
+    let items = state.get_test_items();
     if items.is_empty() {
         return;
     }
-
-    let current_idx = state.test_state.selected().unwrap_or(0);
 
     // Find previous class before current position
     for i in (0..current_idx).rev() {
@@ -847,25 +859,29 @@ fn move_to_prev_group(state: &mut AppState) {
 
 /// Filter test classes to only include tests matching the given names
 fn filter_classes_to_tests(classes: &[crate::model::TestClass], test_names: &[String]) -> Vec<crate::model::TestClass> {
+    let name_set: HashSet<&str> = test_names.iter().map(|s| s.as_str()).collect();
     classes
         .iter()
         .filter_map(|class| {
             let filtered_tests: Vec<_> = class.tests
                 .iter()
                 .filter(|test| {
-                    test_names.iter().any(|name| test.name.contains(name) || name.contains(&test.name))
+                    // Check if any test_name contains or is contained in the test name
+                    name_set.contains(test.name.as_str())
+                        || test_names.iter().any(|name| test.name.contains(name.as_str()) || name.contains(&test.name))
                 })
                 .cloned()
                 .collect();
-            
+
             if filtered_tests.is_empty() {
                 None
             } else {
-                Some(crate::model::TestClass {
-                    namespace: class.namespace.clone(),
-                    name: class.name.clone(),
-                    tests: filtered_tests,
-                })
+                let mut new_class = crate::model::TestClass::new(
+                    class.name.clone(),
+                    class.namespace.clone(),
+                );
+                new_class.tests = filtered_tests;
+                Some(new_class)
             }
         })
         .collect()

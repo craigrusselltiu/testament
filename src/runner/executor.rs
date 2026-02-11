@@ -65,11 +65,22 @@ impl TestExecutor {
         let project_path = self.project_path.clone();
 
         thread::spawn(move || {
-            let trx_path = std::env::temp_dir().join("testament_results.trx");
+            // Unique TRX path per run to avoid stale results from crashes
+            let trx_path = std::env::temp_dir().join(format!(
+                "testament_{}_{}.trx",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            ));
+            // Remove any stale file
+            let _ = std::fs::remove_file(&trx_path);
 
             let mut cmd = Command::new("dotnet");
             cmd.args([
                 "test",
+                "--no-build",
                 "--logger",
                 &format!("trx;LogFileName={}", trx_path.display()),
                 "--verbosity",
@@ -97,7 +108,7 @@ impl TestExecutor {
 
             let mut child = match cmd
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::null())
                 .spawn()
             {
                 Ok(child) => child,

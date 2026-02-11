@@ -62,7 +62,7 @@ impl<'a> TestList<'a> {
         let mut all_not_run = true;
 
         for test in &class.tests {
-            if !self.matches_filter(&test.name) {
+            if !self.matches_filter(&test.name_lower) {
                 continue;
             }
             match test.status {
@@ -98,11 +98,9 @@ impl<'a> TestList<'a> {
         }
     }
 
-    fn matches_filter(&self, name: &str) -> bool {
-        if self.filter_lower.is_empty() {
-            return true;
-        }
-        name.to_lowercase().contains(&self.filter_lower)
+    /// Check if a pre-lowercased name matches the filter
+    fn matches_filter(&self, name_lower: &str) -> bool {
+        self.filter_lower.is_empty() || name_lower.contains(self.filter_lower.as_str())
     }
 }
 
@@ -111,27 +109,29 @@ impl StatefulWidget for TestList<'_> {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mut items: Vec<ListItem> = Vec::new();
+        let mut collapse_key_buf = format!("{}::", self.project_name);
+        let prefix_len = collapse_key_buf.len();
 
-        // Sort classes alphabetically by full name
-        let mut sorted_classes: Vec<_> = self.classes.iter().collect();
-        sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+        // Classes are pre-sorted by full_name_lower at discovery time
+        for class in self.classes {
+            let class_full_name = &class.full_name;
 
-        for class in sorted_classes {
-            let class_full_name = class.full_name();
-            let collapse_key = format!("{}::{}", self.project_name, class_full_name);
-            let is_collapsed = self.collapsed.contains(&collapse_key);
+            // Reuse buffer for collapse key lookup
+            collapse_key_buf.truncate(prefix_len);
+            collapse_key_buf.push_str(class_full_name);
+            let is_collapsed = self.collapsed.contains(&collapse_key_buf);
 
             // Check if any tests in this class match the filter
-            let has_matching_tests = class.tests.iter().any(|t| self.matches_filter(&t.name));
+            let has_matching_tests = class.tests.iter().any(|t| self.matches_filter(&t.name_lower));
             if !has_matching_tests && !self.filter.is_empty() {
                 continue;
             }
 
             // Display name - use "Uncategorized" for empty class names
-            let display_name = if class_full_name.is_empty() {
-                "Uncategorized".to_string()
+            let display_name: &str = if class_full_name.is_empty() {
+                "Uncategorized"
             } else {
-                class_full_name.clone()
+                class_full_name
             };
 
             // Get aggregate status for the class
@@ -139,11 +139,15 @@ impl StatefulWidget for TestList<'_> {
             let (status_symbol, status_style) = self.status_symbol(&class_status);
 
             // Class header with collapse indicator and status
-            let collapse_indicator = if is_collapsed { "+" } else { "-" };
-            let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name)).count();
+            let collapse_str = if is_collapsed { "+ " } else { "- " };
+            let test_count = class.tests.iter().filter(|t| self.matches_filter(&t.name_lower)).count();
+            let mut count_buf = String::with_capacity(8);
+            count_buf.push_str(" (");
+            count_buf.push_str(&test_count.to_string());
+            count_buf.push(')');
             let class_line = Line::from(vec![
                 Span::styled(
-                    format!("{} ", collapse_indicator),
+                    collapse_str,
                     Style::default().fg(self.theme.border),
                 ),
                 Span::styled(format!("{} ", status_symbol), status_style),
@@ -154,27 +158,23 @@ impl StatefulWidget for TestList<'_> {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    format!(" ({})", test_count),
+                    count_buf,
                     Style::default().fg(self.theme.border),
                 ),
             ]);
             items.push(ListItem::new(class_line));
 
-            // Tests under this class (if not collapsed), sorted alphabetically
+            // Tests under this class (if not collapsed)
+            // Tests are pre-sorted by name_lower at discovery time
             if !is_collapsed {
-                let mut sorted_tests: Vec<_> = class.tests.iter()
-                    .filter(|t| self.matches_filter(&t.name))
-                    .collect();
-                sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-
-                for test in sorted_tests {
+                for test in class.tests.iter().filter(|t| self.matches_filter(&t.name_lower)) {
                     let (symbol, style) = self.status_symbol(&test.status);
                     let is_selected = self.selected.contains(&test.full_name);
-                    let select_marker = if is_selected { "[x]" } else { "[ ]" };
+                    let select_prefix = if is_selected { "    [x] " } else { "    [ ] " };
 
                     let test_line = Line::from(vec![
                         Span::styled(
-                            format!("    {} ", select_marker),
+                            select_prefix,
                             if is_selected {
                                 Style::default().fg(self.theme.highlight)
                             } else {
@@ -228,7 +228,7 @@ pub enum TestListItem {
 }
 
 /// Build a flattened list of items for navigation purposes
-/// Classes and tests are sorted alphabetically
+/// Classes and tests are pre-sorted at discovery time
 /// The `project_name` is used to create unique collapse keys per project
 pub fn build_test_items(
     classes: &[TestClass],
@@ -236,22 +236,23 @@ pub fn build_test_items(
     filter: &str,
     project_name: &str,
 ) -> Vec<TestListItem> {
-    // Estimate capacity: classes + average tests per class
     let estimated_capacity = classes.len() + classes.iter().map(|c| c.tests.len()).sum::<usize>();
     let mut items = Vec::with_capacity(estimated_capacity);
     let filter_lower = filter.to_lowercase();
+    let mut collapse_key_buf = format!("{}::", project_name);
+    let prefix_len = collapse_key_buf.len();
 
-    // Sort classes alphabetically by full name
-    let mut sorted_classes: Vec<_> = classes.iter().collect();
-    sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+    // Classes are pre-sorted by full_name_lower at discovery time
+    for class in classes {
+        let class_full_name = &class.full_name;
 
-    for class in sorted_classes {
-        let class_full_name = class.full_name();
-        let collapse_key = format!("{}::{}", project_name, class_full_name);
-        let is_collapsed = collapsed.contains(&collapse_key);
+        // Reuse buffer for collapse key lookup
+        collapse_key_buf.truncate(prefix_len);
+        collapse_key_buf.push_str(class_full_name);
+        let is_collapsed = collapsed.contains(&collapse_key_buf);
 
         let has_matching_tests = class.tests.iter().any(|t| {
-            filter.is_empty() || t.name.to_lowercase().contains(&filter_lower)
+            filter.is_empty() || t.name_lower.contains(&filter_lower)
         });
 
         if !has_matching_tests && !filter.is_empty() {
@@ -261,14 +262,11 @@ pub fn build_test_items(
         items.push(TestListItem::Class(class_full_name.clone()));
 
         if !is_collapsed {
-            // Sort tests alphabetically within the class
-            let mut sorted_tests: Vec<_> = class.tests.iter()
-                .filter(|t| filter.is_empty() || t.name.to_lowercase().contains(&filter_lower))
-                .collect();
-            sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-
-            for test in sorted_tests {
-                items.push(TestListItem::Test(test.full_name.clone()));
+            // Tests are pre-sorted by name_lower at discovery time
+            for test in &class.tests {
+                if filter.is_empty() || test.name_lower.contains(&filter_lower) {
+                    items.push(TestListItem::Test(test.full_name.clone()));
+                }
             }
         }
     }
