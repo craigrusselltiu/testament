@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -35,7 +37,8 @@ impl Widget for OutputPane<'_> {
             Style::default().fg(self.theme.border)
         };
 
-        let display_content = if let Some((completed, total)) = self.progress {
+        // Only allocate a new String when we need to append the progress bar
+        let display_content: Cow<'_, str> = if let Some((completed, total)) = self.progress {
             let width = 20;
             let filled = if total > 0 { (completed * width) / total } else { 0 };
             let bar = format!(
@@ -45,12 +48,12 @@ impl Widget for OutputPane<'_> {
                 completed,
                 total
             );
-            format!("{}{}", self.content, bar)
+            Cow::Owned(format!("{}{}", self.content, bar))
         } else {
-            self.content.to_string()
+            Cow::Borrowed(self.content)
         };
 
-        let paragraph = Paragraph::new(display_content)
+        let paragraph = Paragraph::new(display_content.as_ref())
             .block(
                 Block::default()
                     .borders(Borders::ALL)

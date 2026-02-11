@@ -32,24 +32,25 @@ impl Test {
 pub struct TestClass {
     pub name: String,
     pub namespace: String,
+    pub full_name: String,
+    pub full_name_lower: String,
     pub tests: Vec<Test>,
 }
 
 impl TestClass {
-    #[cfg(test)]
     pub fn new(name: String, namespace: String) -> Self {
+        let full_name = if namespace.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", namespace, name)
+        };
+        let full_name_lower = full_name.to_lowercase();
         Self {
             name,
             namespace,
+            full_name,
+            full_name_lower,
             tests: Vec::new(),
-        }
-    }
-
-    pub fn full_name(&self) -> String {
-        if self.namespace.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}.{}", self.namespace, self.name)
         }
     }
 }
@@ -189,19 +190,19 @@ mod tests {
     #[test]
     fn test_class_full_name_with_namespace() {
         let class = TestClass::new("MyClass".to_string(), "MyNamespace".to_string());
-        assert_eq!(class.full_name(), "MyNamespace.MyClass");
+        assert_eq!(class.full_name, "MyNamespace.MyClass");
     }
 
     #[test]
     fn test_class_full_name_without_namespace() {
         let class = TestClass::new("MyClass".to_string(), String::new());
-        assert_eq!(class.full_name(), "MyClass");
+        assert_eq!(class.full_name, "MyClass");
     }
 
     #[test]
     fn test_class_full_name_nested_namespace() {
         let class = TestClass::new("MyClass".to_string(), "Company.Product.Feature".to_string());
-        assert_eq!(class.full_name(), "Company.Product.Feature.MyClass");
+        assert_eq!(class.full_name, "Company.Product.Feature.MyClass");
     }
 
     #[test]

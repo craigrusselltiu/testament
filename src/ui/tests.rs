@@ -102,7 +102,17 @@ impl<'a> TestList<'a> {
         if self.filter_lower.is_empty() {
             return true;
         }
-        name.to_lowercase().contains(&self.filter_lower)
+        // Case-insensitive contains without allocating a new String
+        let filter_bytes = self.filter_lower.as_bytes();
+        let filter_len = filter_bytes.len();
+        if name.len() < filter_len {
+            return false;
+        }
+        name.as_bytes()
+            .windows(filter_len)
+            .any(|window| {
+                window.iter().zip(filter_bytes).all(|(a, b)| a.to_ascii_lowercase() == *b)
+            })
     }
 }
 
@@ -114,10 +124,10 @@ impl StatefulWidget for TestList<'_> {
 
         // Sort classes alphabetically by full name
         let mut sorted_classes: Vec<_> = self.classes.iter().collect();
-        sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+        sorted_classes.sort_by_key(|a| &a.full_name_lower);
 
         for class in sorted_classes {
-            let class_full_name = class.full_name();
+            let class_full_name = &class.full_name;
             let collapse_key = format!("{}::{}", self.project_name, class_full_name);
             let is_collapsed = self.collapsed.contains(&collapse_key);
 
@@ -128,10 +138,10 @@ impl StatefulWidget for TestList<'_> {
             }
 
             // Display name - use "Uncategorized" for empty class names
-            let display_name = if class_full_name.is_empty() {
-                "Uncategorized".to_string()
+            let display_name: &str = if class_full_name.is_empty() {
+                "Uncategorized"
             } else {
-                class_full_name.clone()
+                class_full_name
             };
 
             // Get aggregate status for the class
@@ -165,7 +175,7 @@ impl StatefulWidget for TestList<'_> {
                 let mut sorted_tests: Vec<_> = class.tests.iter()
                     .filter(|t| self.matches_filter(&t.name))
                     .collect();
-                sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                sorted_tests.sort_by_cached_key(|t| t.name.to_lowercase());
 
                 for test in sorted_tests {
                     let (symbol, style) = self.status_symbol(&test.status);
@@ -220,6 +230,24 @@ impl StatefulWidget for TestList<'_> {
     }
 }
 
+/// Case-insensitive contains check without allocating a new String.
+/// Assumes `needle` is already lowercase.
+fn contains_case_insensitive(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let needle_bytes = needle.as_bytes();
+    let needle_len = needle_bytes.len();
+    if haystack.len() < needle_len {
+        return false;
+    }
+    haystack.as_bytes()
+        .windows(needle_len)
+        .any(|window| {
+            window.iter().zip(needle_bytes).all(|(a, b)| a.to_ascii_lowercase() == *b)
+        })
+}
+
 /// Represents an item in the flattened test list for navigation
 #[derive(Clone)]
 pub enum TestListItem {
@@ -243,15 +271,15 @@ pub fn build_test_items(
 
     // Sort classes alphabetically by full name
     let mut sorted_classes: Vec<_> = classes.iter().collect();
-    sorted_classes.sort_by_key(|a| a.full_name().to_lowercase());
+    sorted_classes.sort_by_key(|a| &a.full_name_lower);
 
     for class in sorted_classes {
-        let class_full_name = class.full_name();
+        let class_full_name = &class.full_name;
         let collapse_key = format!("{}::{}", project_name, class_full_name);
         let is_collapsed = collapsed.contains(&collapse_key);
 
         let has_matching_tests = class.tests.iter().any(|t| {
-            filter.is_empty() || t.name.to_lowercase().contains(&filter_lower)
+            filter.is_empty() || contains_case_insensitive(&t.name, &filter_lower)
         });
 
         if !has_matching_tests && !filter.is_empty() {
@@ -263,9 +291,9 @@ pub fn build_test_items(
         if !is_collapsed {
             // Sort tests alphabetically within the class
             let mut sorted_tests: Vec<_> = class.tests.iter()
-                .filter(|t| filter.is_empty() || t.name.to_lowercase().contains(&filter_lower))
+                .filter(|t| filter.is_empty() || contains_case_insensitive(&t.name, &filter_lower))
                 .collect();
-            sorted_tests.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            sorted_tests.sort_by_cached_key(|t| t.name.to_lowercase());
 
             for test in sorted_tests {
                 items.push(TestListItem::Test(test.full_name.clone()));

@@ -365,11 +365,9 @@ fn group_tests_by_class(
             } else {
                 (full_name.clone(), String::new())
             };
-            TestClass {
-                name: class_name,
-                namespace,
-                tests,
-            }
+            let mut class = TestClass::new(class_name, namespace);
+            class.tests = tests;
+            class
         })
         .collect()
 }

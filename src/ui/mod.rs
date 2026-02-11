@@ -6,4 +6,4 @@ mod test_result;
 mod theme;
 
 pub use layout::{draw, Pane};
-pub use tests::{build_test_items, TestListItem};
+pub use tests::TestListItem;
