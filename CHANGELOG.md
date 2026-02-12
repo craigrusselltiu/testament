@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Block test execution during discovery** - The `r`, `R`, `b`, `a` keybindings and watch mode auto-run are now disabled while test discovery is in progress, preventing race conditions between discovery and execution.
+- **PR mode synthetic test entries** - When PR test methods are not found in the current branch's discovery output (e.g., new tests added by the PR), testament now creates synthetic test entries from the PR diff so they can still be run via `dotnet test --filter`.
 
 ## v1.1.0 - 2026-02-11
 

@@ -63,7 +63,24 @@ pub fn run_with_preselected(
                     DiscoveryEvent::ProjectDiscovered(idx, classes) => {
                         // Filter to only preselected tests if in PR mode
                         let classes = if filter_to_preselected {
-                            filter_classes_to_tests(&classes, &preselected)
+                            let filtered = filter_classes_to_tests(&classes, &preselected);
+                            if filtered.iter().map(|c| c.tests.len()).sum::<usize>() > 0 {
+                                filtered
+                            } else {
+                                // PR tests not found in discovery (new tests not in current branch).
+                                // Create synthetic entries so they can still be run via --filter.
+                                let mut pr_class = crate::model::TestClass::new(
+                                    "PR Tests".to_string(),
+                                    String::new(),
+                                );
+                                for name in &preselected {
+                                    pr_class.tests.push(crate::model::Test::new(
+                                        name.clone(),
+                                        name.clone(),
+                                    ));
+                                }
+                                vec![pr_class]
+                            }
                         } else {
                             classes
                         };
