@@ -1,6 +1,6 @@
 # Testament
 
-![Version](https://img.shields.io/badge/version-1.1.0-green)
+![Version](https://img.shields.io/badge/version-1.1.1-green)
 ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -109,7 +109,8 @@ Testament will automatically:
 2. Parse the solution to find test projects (projects ending in `Tests` or `Test`)
 3. If no `.sln` found, recursively search for `.csproj` files in the directory
 4. Run `dotnet test --list-tests` to discover individual tests
-5. Display projects and tests in the TUI
+5. Resolve fully-qualified test names for accurate class grouping (including inherited tests)
+6. Display projects and tests in the TUI
 
 ## Usage
 

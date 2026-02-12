@@ -128,7 +128,7 @@ pub fn run_with_preselected(
         // Check for file changes in watch mode
         if state.watch_mode {
             if let Some(ref watcher) = file_watcher {
-                if watcher.try_recv() && executor_rx.is_none() {
+                if watcher.try_recv() && executor_rx.is_none() && !state.discovering {
                     state.dirty = true;
                     state.append_output("\n[Watch] File change detected, running tests...\n");
                     run_tests(&mut state, &mut executor_rx);
@@ -338,7 +338,7 @@ pub fn run_with_preselected(
                             }
                         }
                         KeyCode::Char('r') => {
-                            if executor_rx.is_none() {
+                            if executor_rx.is_none() && !state.discovering {
                                 // If tests are multi-selected, run those
                                 if !state.selected_tests.is_empty() {
                                     run_tests(&mut state, &mut executor_rx);
@@ -366,19 +366,17 @@ pub fn run_with_preselected(
                         }
                         KeyCode::Char('R') => {
                             // Shift+R: always run all tests in the project
-                            if executor_rx.is_none() {
-                                // Clear selection to run all tests
-                                state.selected_tests.clear();
+                            if executor_rx.is_none() && !state.discovering {
                                 run_tests(&mut state, &mut executor_rx);
                             }
                         }
                         KeyCode::Char('b') => {
-                            if executor_rx.is_none() {
+                            if executor_rx.is_none() && !state.discovering {
                                 build_project(&mut state, &mut executor_rx);
                             }
                         }
                         KeyCode::Char('a') => {
-                            if executor_rx.is_none() && !state.last_failed.is_empty() {
+                            if executor_rx.is_none() && !state.discovering && !state.last_failed.is_empty() {
                                 run_failed_tests(&mut state, &mut executor_rx);
                             }
                         }
@@ -700,9 +698,17 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
             for class in &mut project.classes {
                 for test in &mut class.tests {
                     if test.status == TestStatus::Running {
-                        if let Some(&(i, result)) = by_bare_name.get(test.name.as_str())
+                        // Try test.name directly
+                        let matched = by_bare_name.get(test.name.as_str())
                             .and_then(|entries| entries.iter().find(|(i, _)| !consumed[*i]))
-                        {
+                            .or_else(|| {
+                                // Try bare method name (after last '.') for Class.Method style names
+                                let method = test.name.rsplit('.').next().unwrap_or(&test.name);
+                                by_bare_name.get(method)
+                                    .and_then(|entries| entries.iter().find(|(i, _)| !consumed[*i]))
+                            });
+
+                        if let Some(&(i, result)) = matched {
                             consumed[i] = true;
                             test.status = match result.outcome {
                                 TestOutcome::Passed => TestStatus::Passed,

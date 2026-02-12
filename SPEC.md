@@ -36,14 +36,15 @@ pub struct Discovery {
 
 ### Test Method Discovery
 
-Testament uses two different mechanisms for discovering individual test methods:
+Testament uses multiple mechanisms for discovering individual test methods:
 
 | Mechanism | Used For | How It Works |
 |-----------|----------|--------------|
-| `dotnet test --list-tests` | Normal operation | Authoritative list from the test framework itself. Handles parameterized tests, generated tests, and all edge cases correctly. |
-| Tree-sitter C# parsing | PR mode only | Parses source diffs to identify added/modified test methods without invoking dotnet. Fast but heuristic-based. |
+| `dotnet test --list-tests` | Initial test enumeration | Authoritative list from the test framework itself. Handles parameterized tests, generated tests, and all edge cases correctly. |
+| `dotnet vstest /ListFullyQualifiedTests` | FQN resolution | Extracts fully-qualified names (`Namespace.Class.Method`) from the test DLL. Used to correctly group tests by class, especially for inherited test methods. Falls back to bare names if unavailable. |
+| Tree-sitter C# parsing | Name map fallback, PR mode | Parses C# source to build a method-to-class map for grouping bare test names. Also used in PR mode to identify changed test methods from git diffs. |
 
-For normal test discovery and execution, Testament always uses `dotnet test --list-tests` as the source of truth. Tree-sitter parsing is only used in PR mode to analyze git diffs and identify which test methods were added or modified, enabling Testament to run only the relevant tests without needing to invoke dotnet on every commit in the diff.
+For normal test discovery, Testament first runs `dotnet test --list-tests` to get the authoritative test list, then attempts `dotnet vstest /ListFullyQualifiedTests` to resolve fully-qualified names for accurate class grouping. If FQN resolution is unavailable, it falls back to tree-sitter parsing to map bare method names to their classes.
 
 ## Test Framework Support
 

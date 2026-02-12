@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v1.1.1 - 2026-02-12
+
+### Fixed
+- **Inherited tests grouped as Uncategorized** - Tests inherited from base classes (common in NUnit with `EnterpriseBusinessObjectTestCase` and similar patterns) were all placed in the Uncategorized bucket because tree-sitter only parses methods in the local project files. Discovery now uses `dotnet vstest /ListFullyQualifiedTests` to get fully-qualified test names (e.g., `Namespace.Class.Method`) and parses class/namespace directly from the FQN. Falls back to tree-sitter name map for projects where vstest is unavailable.
+- **Parameterized test name lookup** - Added cascading lookup for bare method names: exact match, then strip parameters (`Method(args)` to `Method`), then bare method name fallback.
+- **xUnit test files skipped by pre-filter** - Files using only `[Fact]` or `[Theory]` attributes without "Test" in any name were silently skipped by `build_test_name_map`. The pre-filter now also checks for xUnit attributes.
+- **Race condition in FQN temp file** - Parallel discovery threads now use unique temp files for vstest output, preventing concurrent access corruption.
+- **Tests stuck in RUNNING after completion** - TRX result matching failed for FQN-discovered tests because test names stored as full namespace paths didn't match bare method names in TRX output. Pass 2 matching now also tries the bare method name (suffix after last `.`).
+- **Full namespace path shown in test list** - Tests discovered via FQN now display as `Class.Method` instead of the full `Namespace.Sub.Class.Method` path.
+
+### Added
+- **Block test execution during discovery** - The `r`, `R`, `b`, `a` keybindings and watch mode auto-run are now disabled while test discovery is in progress, preventing race conditions between discovery and execution.
+
 ## v1.1.0 - 2026-02-11
 
 ### Added

@@ -213,19 +213,18 @@ pub fn discover_projects_from_paths(project_paths: Vec<PathBuf>) -> Result<(Vec<
             .map(|(idx, path)| {
                 let tx = tx.clone();
                 std::thread::spawn(move || {
-                    // Get project directory for C# parsing
                     let project_dir = path.parent().unwrap_or(Path::new("."));
 
-                    // Run tree-sitter parsing and dotnet list-tests concurrently
-                    let (name_map, test_result) = std::thread::scope(|s| {
-                        let nm = s.spawn(|| build_test_name_map(project_dir));
-                        let lt = s.spawn(|| list_tests(&path));
-                        (nm.join().unwrap(), lt.join().unwrap())
-                    });
+                    let test_result = list_tests(&path);
 
                     match test_result {
                         Ok(test_names) => {
-                            let classes = group_tests_by_class(test_names, &name_map);
+                            let classes = if are_fqn_names(&test_names) {
+                                group_tests_by_fqn(test_names)
+                            } else {
+                                let name_map = build_test_name_map(project_dir);
+                                group_tests_by_class(test_names, &name_map)
+                            };
                             let _ = tx.send(DiscoveryEvent::ProjectDiscovered(idx, classes));
                         }
                         Err(e) => {
@@ -247,8 +246,9 @@ pub fn discover_projects_from_paths(project_paths: Vec<PathBuf>) -> Result<(Vec<
     Ok((projects, rx))
 }
 
-/// Run `dotnet test --list-tests` to get test names.
-/// First tries cache, then --no-build for speed, falls back to building if that fails.
+/// Run `dotnet test --list-tests` to get test names, then attempt to resolve
+/// fully-qualified names via `dotnet vstest /ListFullyQualifiedTests`.
+/// First tries cache, then --no-build for speed.
 fn list_tests(project_path: &Path) -> Result<Vec<String>> {
     // Try cache first
     if let Some(cached) = load_cache(project_path) {
@@ -304,9 +304,20 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut tests = Vec::new();
     let mut in_test_list = false;
+    let mut dll_path = None;
 
     for line in stdout.lines() {
         let trimmed = line.trim();
+        // Extract DLL path from "Test run for <path> (<framework>)"
+        if trimmed.starts_with("Test run for ") {
+            if let Some(path_end) = trimmed.rfind(" (") {
+                let path_str = &trimmed[13..path_end];
+                let p = PathBuf::from(path_str);
+                if p.exists() {
+                    dll_path = Some(p);
+                }
+            }
+        }
         if trimmed == "The following Tests are available:" {
             in_test_list = true;
             continue;
@@ -316,10 +327,55 @@ fn list_tests(project_path: &Path) -> Result<Vec<String>> {
         }
     }
 
+    // Try to get fully-qualified names via vstest
+    if let Some(dll) = dll_path {
+        if let Some(fqn_tests) = list_tests_fqn(&dll) {
+            if fqn_tests.len() == tests.len() {
+                save_cache(project_path, &fqn_tests);
+                return Ok(fqn_tests);
+            }
+        }
+    }
+
     // Save to cache for next time
     save_cache(project_path, &tests);
     
     Ok(tests)
+}
+
+/// Try to get fully-qualified test names using `dotnet vstest /ListFullyQualifiedTests`.
+/// Returns None if the command fails or produces no output.
+fn list_tests_fqn(dll_path: &Path) -> Option<Vec<String>> {
+    // Use a unique temp file per DLL to avoid race conditions in parallel discovery
+    let mut hasher = DefaultHasher::new();
+    dll_path.hash(&mut hasher);
+    let temp_file = std::env::temp_dir().join(format!("testament_fqn_{:x}.txt", hasher.finish()));
+    let output = Command::new("dotnet")
+        .arg("vstest")
+        .arg(dll_path)
+        .arg("/ListFullyQualifiedTests")
+        .arg(format!("/ListTestsTargetPath:{}", temp_file.display()))
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&temp_file).ok()?;
+    let _ = std::fs::remove_file(&temp_file);
+
+    let tests: Vec<String> = content
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+
+    if tests.is_empty() {
+        return None;
+    }
+
+    Some(tests)
 }
 
 /// Get cache file path for a project
@@ -407,21 +463,87 @@ fn save_cache(project_path: &Path, tests: &[String]) {
     let _ = std::fs::write(cache_path, content);
 }
 
+/// Resolve a test name against the name map using cascading lookup strategies.
+/// Returns the matching infos and the lookup key used (for used_counts cycling).
+fn resolve_test_in_map<'a>(
+    method_name: &str,
+    name_map: &'a std::collections::HashMap<String, Vec<crate::parser::TestMethodInfo>>,
+) -> Option<(&'a Vec<crate::parser::TestMethodInfo>, String)> {
+    // 1. Exact match (handles non-parameterized FQN or bare method name)
+    if let Some(infos) = name_map.get(method_name) {
+        return Some((infos, method_name.to_string()));
+    }
+
+    // 2. Strip parameterized test arguments: "NS.Class.Method(x: 1)" -> "NS.Class.Method"
+    let base = method_name.split('(').next().unwrap_or(method_name);
+    if base.len() < method_name.len() {
+        if let Some(infos) = name_map.get(base) {
+            return Some((infos, base.to_string()));
+        }
+    }
+
+    // 3. Extract bare method name: "NS.Class.Method" or "NS.Class.Method(x: 1)" -> "Method"
+    if let Some(pos) = base.rfind('.') {
+        let bare = &base[pos + 1..];
+        if let Some(infos) = name_map.get(bare) {
+            return Some((infos, bare.to_string()));
+        }
+    }
+
+    None
+}
+
+/// Check if test names are fully-qualified (e.g., "Namespace.Class.Method").
+/// Returns true if most names contain 2+ dots (namespace.class.method).
+fn are_fqn_names(test_names: &[String]) -> bool {
+    if test_names.is_empty() {
+        return false;
+    }
+    let fqn_count = test_names.iter()
+        .filter(|n| {
+            let base = n.split('(').next().unwrap_or(n);
+            base.matches('.').count() >= 2
+        })
+        .count();
+    fqn_count > test_names.len() / 2
+}
+
+/// Parse a fully-qualified test name into (method, class, namespace).
+/// Input: "Namespace.SubNS.ClassName.MethodName" or "NS.Class.Method(args)"
+/// Returns: (method_name_with_args, class_name, namespace)
+fn parse_fqn(fqn: &str) -> (String, String, String) {
+    let base = fqn.split('(').next().unwrap_or(fqn);
+    let parts: Vec<&str> = base.rsplitn(3, '.').collect();
+    match parts.len() {
+        3 => (parts[0].to_string(), parts[1].to_string(), parts[2].to_string()),
+        2 => (parts[0].to_string(), parts[1].to_string(), String::new()),
+        _ => (fqn.to_string(), String::new(), String::new()),
+    }
+}
+
 /// Group test names by their class using C# source parsing info.
+/// Supports both fully-qualified names (from vstest) and bare method names (from dotnet test).
 fn group_tests_by_class(
     test_names: Vec<String>,
     name_map: &std::collections::HashMap<String, Vec<crate::parser::TestMethodInfo>>,
 ) -> Vec<TestClass> {
     use std::collections::HashMap;
 
+    // If names are FQN, parse directly without needing the name map
+    if are_fqn_names(&test_names) {
+        return group_tests_by_fqn(test_names);
+    }
+
     let mut classes: HashMap<String, Vec<Test>> = HashMap::new();
     // Track usage index per key to cycle through entries for duplicate method names
     let mut used_counts: HashMap<String, usize> = HashMap::new();
 
     for method_name in test_names {
-        // Look up the method in our parsed C# info
-        let (full_name, class_full_name) = if let Some(infos) = name_map.get(&method_name) {
-            let idx = used_counts.entry(method_name.clone()).or_insert(0);
+        // Look up the method in our parsed C# info with cascading fallbacks
+        let (full_name, class_full_name) = if let Some((infos, lookup_key)) =
+            resolve_test_in_map(&method_name, name_map)
+        {
+            let idx = used_counts.entry(lookup_key).or_insert(0);
             let info = &infos[(*idx) % infos.len()];
             *idx += 1;
 
@@ -441,6 +563,46 @@ fn group_tests_by_class(
         classes.entry(class_full_name).or_default().push(test);
     }
 
+    build_test_classes(classes)
+}
+
+/// Group tests using fully-qualified names parsed directly from the FQN string.
+fn group_tests_by_fqn(test_names: Vec<String>) -> Vec<TestClass> {
+    use std::collections::HashMap;
+
+    let mut classes: HashMap<String, Vec<Test>> = HashMap::new();
+
+    for fqn in test_names {
+        let (method, class, namespace) = parse_fqn(&fqn);
+        let full_name = if namespace.is_empty() {
+            if class.is_empty() {
+                method.clone()
+            } else {
+                format!("{}.{}", class, method)
+            }
+        } else {
+            format!("{}.{}.{}", namespace, class, method)
+        };
+        let class_full = if namespace.is_empty() {
+            class.clone()
+        } else {
+            format!("{}.{}", namespace, class)
+        };
+        // Display name: Class.Method (not the full namespace path)
+        let display_name = if class.is_empty() {
+            method
+        } else {
+            format!("{}.{}", class, method)
+        };
+        let test = Test::new(display_name, full_name);
+        classes.entry(class_full).or_default().push(test);
+    }
+
+    build_test_classes(classes)
+}
+
+/// Convert a HashMap of class -> tests into sorted Vec<TestClass>.
+fn build_test_classes(classes: std::collections::HashMap<String, Vec<Test>>) -> Vec<TestClass> {
     let mut result: Vec<TestClass> = classes
         .into_iter()
         .map(|(full_name, mut tests)| {
@@ -654,6 +816,141 @@ mod tests {
 
         let class_b = result.iter().find(|c| c.name == "ClassB").unwrap();
         assert_eq!(class_b.tests.len(), 2);
+    }
+
+    #[test]
+    fn test_group_tests_fqn_input_matches_full_name_key() {
+        // dotnet test --list-tests outputs fully qualified names like "NS.MyClass.TestMethod"
+        // The name map has both full_name and bare method_name keys
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        let info = make_test_info("TestMethod", "MyClass", "MyNamespace");
+        map.entry("MyNamespace.MyClass.TestMethod".to_string())
+            .or_default()
+            .push(info.clone());
+        map.entry("TestMethod".to_string())
+            .or_default()
+            .push(info);
+
+        let tests = vec!["MyNamespace.MyClass.TestMethod".to_string()];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "MyNamespace");
+        assert_eq!(class.tests.len(), 1);
+    }
+
+    #[test]
+    fn test_group_tests_parameterized_test_names() {
+        // dotnet test --list-tests outputs parameterized tests with arguments:
+        // "NS.MyClass.TestMethod(x: 1, expected: true)"
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        let info = make_test_info("TestMethod", "MyClass", "NS");
+        map.entry("NS.MyClass.TestMethod".to_string())
+            .or_default()
+            .push(info.clone());
+        map.entry("TestMethod".to_string())
+            .or_default()
+            .push(info);
+
+        let tests = vec![
+            "NS.MyClass.TestMethod(x: 1, expected: true)".to_string(),
+            "NS.MyClass.TestMethod(x: 2, expected: false)".to_string(),
+        ];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "NS");
+        assert_eq!(class.tests.len(), 2);
+        // No Uncategorized class should exist
+        assert!(result.iter().all(|c| !c.name.is_empty()));
+    }
+
+    #[test]
+    fn test_group_tests_bare_method_name_fallback() {
+        // Bare method name (no dots) matched via name_map when FQN isn't available
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        let info = make_test_info("TestMethod", "MyClass", "MyNamespace");
+        map.entry("TestMethod".to_string())
+            .or_default()
+            .push(info);
+
+        let tests = vec!["TestMethod".to_string()];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyClass");
+        assert_eq!(class.namespace, "MyNamespace");
+    }
+
+    #[test]
+    fn test_group_tests_parameterized_bare_name_fallback() {
+        // Parameterized bare name stripped and matched via name_map
+        let mut map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+        let info = make_test_info("Calculate", "CalcTests", "App");
+        map.entry("Calculate".to_string())
+            .or_default()
+            .push(info);
+
+        let tests = vec![
+            "Calculate(a: 1, b: 2)".to_string(),
+        ];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "CalcTests");
+        assert_eq!(class.namespace, "App");
+    }
+
+    #[test]
+    fn test_group_tests_fqn_direct_parsing() {
+        // FQN names (from vstest) are parsed directly without name_map
+        let map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+
+        let tests = vec![
+            "MyNamespace.MyClass.TestAdd".to_string(),
+            "MyNamespace.MyClass.TestDelete".to_string(),
+            "MyNamespace.OtherClass.TestSave".to_string(),
+        ];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 2);
+        let my_class = result.iter().find(|c| c.name == "MyClass").unwrap();
+        assert_eq!(my_class.namespace, "MyNamespace");
+        assert_eq!(my_class.tests.len(), 2);
+        // Test names should be Class.Method, not full FQN
+        assert_eq!(my_class.tests[0].name, "MyClass.TestAdd");
+        assert_eq!(my_class.tests[0].full_name, "MyNamespace.MyClass.TestAdd");
+
+        let other_class = result.iter().find(|c| c.name == "OtherClass").unwrap();
+        assert_eq!(other_class.namespace, "MyNamespace");
+        assert_eq!(other_class.tests.len(), 1);
+        assert_eq!(other_class.tests[0].name, "OtherClass.TestSave");
+    }
+
+    #[test]
+    fn test_group_tests_fqn_with_deep_namespace() {
+        // FQN with deep namespace like Enterprise.Module.Business.Test.ClassName.Method
+        let map: HashMap<String, Vec<TestMethodInfo>> = HashMap::new();
+
+        let tests = vec![
+            "Enterprise.Module.Business.Test.MyTest.TestAdd".to_string(),
+            "Enterprise.Module.Business.Test.MyTest.TestDelete".to_string(),
+        ];
+        let result = group_tests_by_class(tests, &map);
+
+        assert_eq!(result.len(), 1);
+        let class = &result[0];
+        assert_eq!(class.name, "MyTest");
+        assert_eq!(class.namespace, "Enterprise.Module.Business.Test");
+        assert_eq!(class.tests.len(), 2);
+        // Display name is Class.Method, not full namespace path
+        assert_eq!(class.tests[0].name, "MyTest.TestAdd");
     }
 
     // find_solution tests

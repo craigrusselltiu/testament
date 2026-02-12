@@ -166,8 +166,11 @@ pub fn build_test_name_map(project_dir: &Path) -> HashMap<String, Vec<TestMethod
     if let Ok(entries) = glob_cs_files(project_dir) {
         for path in entries {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                // Light pre-filter: skip files that don't mention "Test" at all
-                if !content.contains("Test") {
+                // Light pre-filter: skip files unlikely to contain test methods
+                if !content.contains("Test")
+                    && !content.contains("[Fact")
+                    && !content.contains("[Theory")
+                {
                     continue;
                 }
 

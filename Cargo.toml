@@ -1,6 +1,6 @@
 [package]
 name = "testament"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "A TUI for discovering, running, and monitoring .NET tests"
 license = "MIT"
