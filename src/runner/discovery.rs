@@ -386,14 +386,14 @@ fn get_cache_path(project_path: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("testament_discovery_{:x}.cache", hash))
 }
 
-/// Get the modification time of a project (max of csproj mtime and newest DLL in bin/)
-fn get_project_mtime(project_path: &Path) -> Option<u64> {
+/// Get the modification time of a project in millis (max of csproj mtime and newest DLL in bin/)
+fn get_project_mtime(project_path: &Path) -> Option<u128> {
     let csproj_mtime = std::fs::metadata(project_path)
         .and_then(|m| m.modified())
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
-        .as_secs();
+        .as_millis();
 
     let mut max_mtime = csproj_mtime;
 
@@ -409,13 +409,13 @@ fn get_project_mtime(project_path: &Path) -> Option<u64> {
 }
 
 /// Find the newest file with the given extension under a directory (recursive).
-fn newest_file_mtime(dir: &Path, ext: &str) -> std::result::Result<u64, std::io::Error> {
-    let mut max: u64 = 0;
+fn newest_file_mtime(dir: &Path, ext: &str) -> std::result::Result<u128, std::io::Error> {
+    let mut max: u128 = 0;
     newest_file_mtime_recursive(dir, ext, &mut max)?;
     Ok(max)
 }
 
-fn newest_file_mtime_recursive(dir: &Path, ext: &str, max: &mut u64) -> std::result::Result<(), std::io::Error> {
+fn newest_file_mtime_recursive(dir: &Path, ext: &str, max: &mut u128) -> std::result::Result<(), std::io::Error> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let ft = entry.file_type()?;
@@ -424,7 +424,7 @@ fn newest_file_mtime_recursive(dir: &Path, ext: &str, max: &mut u64) -> std::res
         } else if ft.is_file() && entry.path().extension().is_some_and(|e| e == ext) {
             if let Ok(mtime) = entry.metadata()
                 .and_then(|m| m.modified())
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis())
             {
                 *max = (*max).max(mtime);
             }
@@ -440,7 +440,7 @@ fn load_cache(project_path: &Path) -> Option<Vec<String>> {
     let mut lines = content.lines();
     
     // First line is the mtime
-    let cached_mtime: u64 = lines.next()?.parse().ok()?;
+    let cached_mtime: u128 = lines.next()?.parse().ok()?;
     let current_mtime = get_project_mtime(project_path)?;
     
     if cached_mtime != current_mtime {

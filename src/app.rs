@@ -11,6 +11,7 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
+use crate::git::ChangedTest;
 use crate::model::{TestProject, TestStatus};
 use crate::parser::TestOutcome;
 use crate::runner::{DiscoveryEvent, ExecutorEvent, FileWatcher, TestExecutor};
@@ -29,7 +30,7 @@ pub fn run_with_preselected(
     projects: Vec<TestProject>,
     solution_dir: PathBuf,
     discovery_rx: mpsc::Receiver<DiscoveryEvent>,
-    preselected_tests: Vec<String>,
+    preselected_tests: Vec<ChangedTest>,
     context: Option<String>,
 ) -> io::Result<()> {
     // Setup terminal
@@ -68,18 +69,25 @@ pub fn run_with_preselected(
                                 filtered
                             } else {
                                 // PR tests not found in discovery (new tests not in current branch).
-                                // Create synthetic entries so they can still be run via --filter.
-                                let mut pr_class = crate::model::TestClass::new(
-                                    "PR Tests".to_string(),
-                                    String::new(),
-                                );
-                                for name in &preselected {
-                                    pr_class.tests.push(crate::model::Test::new(
-                                        name.clone(),
-                                        name.clone(),
-                                    ));
+                                // Only create synthetic entries for tests that belong to this project.
+                                let project_dir = state.projects.get(idx)
+                                    .and_then(|p| p.path.parent())
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("");
+                                let relevant: Vec<_> = if project_dir.is_empty() {
+                                    preselected.iter().collect()
+                                } else {
+                                    preselected.iter()
+                                        .filter(|ct| ct.file_path.replace('/', "\\").contains(project_dir)
+                                            || ct.file_path.contains(project_dir))
+                                        .collect()
+                                };
+                                if relevant.is_empty() {
+                                    vec![]
+                                } else {
+                                    build_synthetic_classes(&relevant)
                                 }
-                                vec![pr_class]
                             }
                         } else {
                             classes
@@ -196,6 +204,8 @@ pub fn run_with_preselected(
                         }
 
                         apply_results(&mut state, &results);
+                        // Reset any tests still stuck in RUNNING (no TRX result matched)
+                        reset_unmatched_running_tests(&mut state);
                         state.invalidate_test_items();
 
                         // Show summary
@@ -711,6 +721,29 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
                 }
             }
 
+            // Pass 1.5: endsWith matching for multi-segment names (e.g. "Class.Method" vs "Namespace.Class.Method")
+            let suffix_needle = ".";
+            for class in &mut project.classes {
+                for test in &mut class.tests {
+                    if test.status != TestStatus::Running {
+                        continue;
+                    }
+                    let needle = format!("{}{}", suffix_needle, test.full_name);
+                    let matched = results.iter().enumerate()
+                        .find(|(i, r)| !consumed[*i] && (r.test_name.ends_with(&needle) || r.test_name == test.full_name));
+                    if let Some((i, result)) = matched {
+                        consumed[i] = true;
+                        test.status = match result.outcome {
+                            TestOutcome::Passed => TestStatus::Passed,
+                            TestOutcome::Failed => TestStatus::Failed,
+                            TestOutcome::Skipped => TestStatus::Skipped,
+                        };
+                        test.duration_ms = Some(result.duration_ms);
+                        test.error_message = result.error_message.clone();
+                    }
+                }
+            }
+
             // Pass 2: bare name fallback for remaining unmatched tests/results
             for class in &mut project.classes {
                 for test in &mut class.tests {
@@ -742,6 +775,19 @@ fn apply_results(state: &mut AppState, results: &[crate::parser::TestResult]) {
     }
     // Clear running project index after applying results
     state.running_project_idx = None;
+}
+
+/// Reset any tests still in RUNNING state back to NotRun (no TRX result found for them)
+fn reset_unmatched_running_tests(state: &mut AppState) {
+    for project in &mut state.projects {
+        for class in &mut project.classes {
+            for test in &mut class.tests {
+                if test.status == TestStatus::Running {
+                    test.status = TestStatus::NotRun;
+                }
+            }
+        }
+    }
 }
 
 /// Get the tests for the currently selected class, if a class is selected.
@@ -880,18 +926,17 @@ fn move_to_prev_group(state: &mut AppState) {
     }
 }
 
-/// Filter test classes to only include tests matching the given names
-fn filter_classes_to_tests(classes: &[crate::model::TestClass], test_names: &[String]) -> Vec<crate::model::TestClass> {
-    let name_set: HashSet<&str> = test_names.iter().map(|s| s.as_str()).collect();
+/// Filter test classes to only include tests matching the given changed tests
+fn filter_classes_to_tests(classes: &[crate::model::TestClass], changed_tests: &[ChangedTest]) -> Vec<crate::model::TestClass> {
+    let name_set: HashSet<&str> = changed_tests.iter().map(|t| t.method_name.as_str()).collect();
     classes
         .iter()
         .filter_map(|class| {
             let filtered_tests: Vec<_> = class.tests
                 .iter()
                 .filter(|test| {
-                    // Check if any test_name contains or is contained in the test name
                     name_set.contains(test.name.as_str())
-                        || test_names.iter().any(|name| test.name.contains(name.as_str()) || name.contains(&test.name))
+                        || changed_tests.iter().any(|ct| test.name.contains(ct.method_name.as_str()) || ct.method_name.contains(&test.name))
                 })
                 .cloned()
                 .collect();
@@ -908,4 +953,29 @@ fn filter_classes_to_tests(classes: &[crate::model::TestClass], test_names: &[St
             }
         })
         .collect()
+}
+
+/// Build synthetic test classes from PR changed tests, grouped by class name
+fn build_synthetic_classes(changed_tests: &[&ChangedTest]) -> Vec<crate::model::TestClass> {
+    use std::collections::HashMap;
+    let mut class_map: HashMap<&str, Vec<&&ChangedTest>> = HashMap::new();
+    for ct in changed_tests {
+        class_map.entry(ct.class_name.as_str()).or_default().push(ct);
+    }
+    let mut classes = Vec::new();
+    for (class_name, tests) in &class_map {
+        let mut tc = crate::model::TestClass::new(
+            class_name.to_string(),
+            String::new(),
+        );
+        for ct in tests {
+            let display_name = format!("{}.{}", class_name, ct.method_name);
+            tc.tests.push(crate::model::Test::new(
+                display_name.clone(),
+                display_name,
+            ));
+        }
+        classes.push(tc);
+    }
+    classes
 }

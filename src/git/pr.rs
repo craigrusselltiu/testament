@@ -113,7 +113,6 @@ pub fn fetch_pr_diff(info: &PrInfo, token: Option<&str>) -> Result<String, Testa
 #[derive(Debug, Clone)]
 pub struct ChangedTest {
     pub file_path: String,
-    #[allow(dead_code)]
     pub class_name: String,
     pub method_name: String,
     #[allow(dead_code)]

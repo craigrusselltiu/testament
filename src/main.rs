@@ -160,9 +160,6 @@ fn run_pr_mode(url: &str, path: Option<std::path::PathBuf>, no_tui: bool) {
         std::process::exit(1);
     }
 
-    // Collect test method names for pre-selection
-    let test_names: Vec<String> = changed_tests.iter().map(|t| t.method_name.clone()).collect();
-
     if no_tui {
         // --no-tui flag: run tests directly without TUI
         println!("\nRunning tests in {} project(s):", project_paths.len());
@@ -224,7 +221,7 @@ fn run_pr_mode(url: &str, path: Option<std::path::PathBuf>, no_tui: bool) {
 
         let context = Some(format!("Running Tests for PR #{}", pr_info.number));
 
-        if let Err(e) = app::run_with_preselected(projects, solution_dir, discovery_rx, test_names, context) {
+        if let Err(e) = app::run_with_preselected(projects, solution_dir, discovery_rx, changed_tests, context) {
             eprintln!("Error: {}", e);
             std::process::exit(1);
         }
