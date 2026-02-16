@@ -386,7 +386,7 @@ fn get_cache_path(project_path: &Path) -> PathBuf {
     std::env::temp_dir().join(format!("testament_discovery_{:x}.cache", hash))
 }
 
-/// Get the modification time of a project in millis (max of csproj mtime and newest DLL in bin/)
+/// Get the modification time of a project in millis (max of csproj, source files, and DLLs)
 fn get_project_mtime(project_path: &Path) -> Option<u128> {
     let csproj_mtime = std::fs::metadata(project_path)
         .and_then(|m| m.modified())
@@ -397,8 +397,13 @@ fn get_project_mtime(project_path: &Path) -> Option<u128> {
 
     let mut max_mtime = csproj_mtime;
 
-    // Check newest DLL in bin/ - rebuilds update DLLs even when csproj doesn't change
     if let Some(project_dir) = project_path.parent() {
+        // Check newest .cs source file - detects renamed/added/removed test methods
+        if let Ok(cs_mtime) = newest_file_mtime(project_dir, "cs") {
+            max_mtime = max_mtime.max(cs_mtime);
+        }
+
+        // Check newest DLL in bin/ - rebuilds update DLLs even when csproj doesn't change
         let bin_dir = project_dir.join("bin");
         if let Ok(dll_mtime) = newest_file_mtime(&bin_dir, "dll") {
             max_mtime = max_mtime.max(dll_mtime);
